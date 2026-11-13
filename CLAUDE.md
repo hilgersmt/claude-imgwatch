@@ -14,7 +14,8 @@ You are probably on a machine that already has an older, hand-installed imgwatch
    settings.json, creates the `imgbrowser` Browser profile if missing, and ends with
    `imgwatch --doctor`; fix every FAIL and explain the warnings.
 4. One manual step: iTerm2 > Settings > General > Magic > Enable Python API (ask the user).
-5. Run the README test checklist from a **new** Claude session (hooks load at session start).
+5. Run `tests/run.sh` (headless, safe: throwaway HOME) and report the result, then the README's
+   in-pane checklist from a **new** Claude session (hooks load at session start).
 
 Rules: never overwrite `~/.claude/settings.json` wholesale (install.sh merges); keep the pgrep
 pattern in `hooks/imgpane-autostart.sh` in sync with how `bin/imgwatch` launches Python, and the

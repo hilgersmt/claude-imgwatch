@@ -236,7 +236,17 @@ which needs `allow_remote_control` in kitty.conf; Ghostty has no split CLI, so s
 `imgwatch --owner … --session …` in a split yourself). There are no browser panes outside
 iTerm2: HTML and structures fall back to screenshots. None of this has been run yet.
 
-## Test checklist
+## Automated tests
+`tests/run.sh` (about a minute; `-k` keeps the temp dir with logs) runs everything that doesn't
+need a real pane, against a throwaway `HOME`, so your install, queue, cache and settings are never
+touched: syntax; the enqueue hook's filter and line format; `install.sh` on an empty home
+(links, settings merge, browser profile, idempotent second run, clean doctor including the pgrep
+check); cache/queue pruning; and a headless watcher in link mode fed a PNG, a burst of 8 (contact
+sheet), SVG, a 3-page PDF, HTML, a PDB (Mol* page with the data embedded), an mp4 (GIF preview),
+plus queue lines for its own and another session. Missing optional pieces (ffmpeg, Pillow,
+network for Mol*) are reported as SKIP. Last run on the reference Mac: 26 passed.
+
+## Test checklist (in a real pane)
 1. Start `claude` in iTerm2: a right pane titled imgwatch opens and focus stays on the left.
 2. Ask Claude for a matplotlib PNG, an SVG and an animated GIF in its scratch dir: all three
    appear, the GIF animates, the SVG is rasterised.
