@@ -33,7 +33,7 @@ waitfor() {  # waitfor <fixed string> [seconds]: wait until the watcher log cont
   local i; for ((i = 0; i < ${2:-10} * 5; i++)); do log | grep -qF -- "$1" && return 0; sleep 0.2; done; return 1
 }
 
-printf '\033[1mclaude-imgwatch tests\033[0m  (%s, %s)\n' "$(git -C "$repo" log -1 --format='%h %cs' 2>/dev/null)" "$py"
+printf '\033[1mclaude-imgwatch tests\033[0m  (%s, %s)\n' "$("$repo/bin/imgwatch.py" -V 2>/dev/null | sed 's/^imgwatch //')" "$py"
 
 # ------------------------------------------------------------------ fixtures
 "$py" - "$T/fix" <<'PY' || { echo "fixture build failed (needs matplotlib)"; exit 1; }
@@ -92,7 +92,8 @@ echo "static"
 check "imgwatch.py compiles" "'$py' -m py_compile '$repo/bin/imgwatch.py'"
 check "shell scripts parse" "bash -n '$repo/bin/imgpane' && bash -n '$repo/bin/imgwatch' && bash -n '$repo'/hooks/*.sh && bash -n '$repo/install.sh'"
 check "setup.sh parses and refuses to run unattended" "bash -n '$repo/setup.sh' && ! '$repo/setup.sh' </dev/null >/dev/null 2>&1"
-check "-V prints a version" "'$repo/bin/imgwatch' -V | grep -q '^imgwatch '"
+check "-V prints a version" "'$repo/bin/imgwatch' -V | grep -qE '^imgwatch (v[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)? \([0-9a-f]+|[0-9a-f]{7})'"
+check "CHANGELOG has an entry for the current release tag" "t=\$(git -C '$repo' describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); [ -z \"\$t\" ] || grep -q \"^## \$t \" '$repo/CHANGELOG.md'"
 q=$HOME/.claude/imgwatch/queue
 enq() { printf '{"session_id":"S","tool_input":{"file_path":"%s"}}' "$1" | "$repo/hooks/imgwatch-enqueue.sh"; }
 hook() { "$repo/hooks/imgwatch-enqueue.sh"; }

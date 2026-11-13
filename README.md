@@ -39,6 +39,10 @@ the demo. Prefer Claude to drive? Open `claude` in the repo and ask it to set up
 `setup-imgwatch` skill makes it do the same steps, verifying each one. Unattended installs:
 `./install.sh` (below).
 
+## Versions
+Releases are git tags (`v0.0.5`, …); see [CHANGELOG.md](CHANGELOG.md). `imgwatch -V` and the pane banner
+show which one a machine runs, e.g. `v0.0.5 (1a2b3c4)`. Update with `git pull`.
+
 ## Reference versions (work Mac, 2026-11-13, all verified working together)
 
 | Component | Version | Needed for |

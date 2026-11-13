@@ -74,7 +74,7 @@ if [ "${1:-}" = --demo ]; then  # just the live demo, using the installed config
   printf '%s── Demo%s\n' "$B$C" "$N"; demo_step; exit
 fi
 
-printf '%sclaude-imgwatch setup%s  %s\n' "$B" "$N" "$(git -C "$repo" log -1 --format='%h %cs' 2>/dev/null)"
+printf '%sclaude-imgwatch setup%s  %s\n' "$B" "$N" "$("$repo/bin/imgwatch.py" -V 2>/dev/null | sed 's/^imgwatch //')"
 say "This gives every Claude Code session in iTerm2 a side pane that shows the images, plots,"
 say "videos, PDFs, web pages and molecular structures it makes. About 10 minutes. Nothing is"
 say "installed without asking, and every step can be skipped and re-run later."

@@ -94,12 +94,20 @@ if a.session:  # one browser pane per Claude session, not one shared by all of t
 
 
 def version():
-    try:
-        out = subprocess.run(["git", "-C", str(HERE), "log", "-1", "--format=%h %cs"],
-                             capture_output=True, text=True, timeout=3).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        out = ""
-    return out or "unknown"
+    """'v0.0.5 (0aa9345)' on a release tag, 'v0.0.5+3 (abc1234)' three commits after it,
+    '0aa9345 2026-11-13' with no tags (e.g. a shallow copy), 'unknown' outside git."""
+    def git(*args):
+        try:
+            return subprocess.run(["git", "-C", str(HERE), *args], capture_output=True, text=True,
+                                  timeout=3).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+    d = git("describe", "--tags", "--match", "v[0-9]*", "--long", "--dirty")
+    m = re.match(r"^(v[\d.]+)-(\d+)-g([0-9a-f]+)(-dirty)?$", d)
+    if m:
+        tag, ahead, sha, dirty = m.groups()
+        return f"{tag}{'+' + ahead if ahead != '0' else ''} ({sha}{', modified' if dirty else ''})"
+    return git("log", "-1", "--format=%h %cs") or "unknown"
 
 
 # ---------------------------------------------------------------- terminal backends
