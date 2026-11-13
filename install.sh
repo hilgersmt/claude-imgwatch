@@ -31,7 +31,7 @@ if [ -f "$cfg" ]; then echo "  ok   $cfg (kept)"; else
   echo "  new  $cfg (IMGWATCH_PYTHON=$py)"
   if [ -z "$dry" ]; then mkdir -p "$(dirname "$cfg")"; sed "s|^IMGWATCH_PYTHON=.*|IMGWATCH_PYTHON=$py|" "$repo/config.example" > "$cfg"; fi
 fi
-. "$cfg" 2>/dev/null || true
+if [ -f "$cfg" ]; then . "$cfg"; fi
 py=${IMGWATCH_PYTHON:-python3}
 for m in iterm2 selenium; do "$py" -c "import $m" 2>/dev/null && echo "  $py has $m" || echo "  ($py lacks $m)"; done
 
