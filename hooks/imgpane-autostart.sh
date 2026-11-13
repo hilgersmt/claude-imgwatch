@@ -1,7 +1,12 @@
 #!/bin/bash
 # SessionStart hook: open an imgwatch pane next to an interactive Claude session in iTerm2.
 # Opt out per launch with:  CLAUDE_NO_IMGPANE=1 claude
-[ "$TERM_PROGRAM" = iTerm.app ] && [ -n "$ITERM_SESSION_ID" ] || exit 0
+# iTerm2 (tested); WezTerm and kitty (experimental: split via their CLIs, see bin/imgpane)
+case "$TERM_PROGRAM" in
+  iTerm.app) [ -n "$ITERM_SESSION_ID" ] || exit 0 ;;
+  WezTerm)   [ -n "$WEZTERM_PANE" ] || exit 0 ;;
+  *)         [ -n "$KITTY_WINDOW_ID" ] || exit 0 ;;
+esac
 [ "${CLAUDE_CODE_ENTRYPOINT:-cli}" = cli ] || exit 0      # skip claude -p / SDK runs
 [ -n "$CLAUDE_NO_IMGPANE" ] && exit 0
 # config: IMGWATCH_PYTHON, IMGWATCH_BROWSER_PROFILE, IMGPANE_WIDTH (env vars in ~/.zshrc do not

@@ -11,10 +11,13 @@ You are probably on a machine that already has an older, hand-installed imgwatch
 2. Check prerequisites against the README's version table (iTerm2 ≥ 3.7 for the browser lane,
    python with `iterm2` / `selenium`, ffmpeg, Chrome). Install missing pieces only with the user's OK.
 3. `./install.sh -n`, show the user the plan, then `./install.sh`. It backs up the old files and
-   settings.json; check `~/.config/imgwatch/config` points at the right Python.
-4. iTerm2 manual steps (Python API, `imgbrowser` Browser profile): ask the user to do them in the GUI.
+   settings.json, creates the `imgbrowser` Browser profile if missing, and ends with
+   `imgwatch --doctor`; fix every FAIL and explain the warnings.
+4. One manual step: iTerm2 > Settings > General > Magic > Enable Python API (ask the user).
 5. Run the README test checklist from a **new** Claude session (hooks load at session start).
 
 Rules: never overwrite `~/.claude/settings.json` wholesale (install.sh merges); keep the pgrep
-pattern in `hooks/imgpane-autostart.sh` in sync with how `bin/imgwatch` launches Python; changes
+pattern in `hooks/imgpane-autostart.sh` in sync with how `bin/imgwatch` launches Python, and the
+extension list in `hooks/imgwatch-enqueue.sh` in sync with `EXTS` (the doctor checks both);
+the WezTerm/kitty/Ghostty branches are untested; changes
 go into this repo (commit), not into the symlinked copies.

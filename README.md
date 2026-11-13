@@ -1,13 +1,23 @@
 # claude-imgwatch
 
 A live media pane for Claude Code in iTerm2. Every interactive `claude` session gets its own
-split pane that shows the images, videos and HTML pages that session produces or opens, as
-they appear: PNG/JPEG/GIF/SVG inline, video as an animated GIF preview, and HTML (Plotly
-etc.) as a real interactive page in an iTerm2 browser pane.
+split pane that shows the files that session produces or opens, as they appear:
+
+| File | Shown as |
+|---|---|
+| PNG, JPEG, GIF, WebP, TIFF, BMP, SVG | inline image (GIFs animate) |
+| many stills at once | one labelled contact sheet |
+| MP4, MOV, WebM, … | animated-GIF preview of the first 8 s |
+| PDF | first page inline, "page 1 of N", name links to the file |
+| HTML (Plotly, Bokeh, …) | live page in an iTerm2 browser pane |
+| PDB, mmCIF, BinaryCIF, SDF, MOL, MOL2 | interactive Mol* viewer in the browser pane |
+
+Every header's file name and folder are clickable (cmd-click opens them).
 
 ![Claude Code on the left; imgwatch pane (top right) playing a GIF the session made; iTerm2 browser pane (bottom right) with a live, rotating Plotly 3D surface](docs/demo.gif)
 
-macOS + iTerm2 only (uses iTerm2's inline-image protocol, AppleScript and Python API).
+macOS + iTerm2 (inline-image protocol, AppleScript, Python API). WezTerm, kitty and Ghostty
+support is experimental and untested (see below).
 
 ## Reference versions (work Mac, 2026-11-13, all verified working together)
 
@@ -19,6 +29,9 @@ macOS + iTerm2 only (uses iTerm2's inline-image protocol, AppleScript and Python
 | Python | 3.13.9 (Anaconda, `/opt/anaconda3/bin/python`) | stdlib is enough for stills |
 | `iterm2` (pip) | 2.30 | HTML browser lane |
 | `selenium` (pip) | 4.52.0 + Google Chrome 157 | HTML screenshot lane |
+| `watchdog` (pip) | 4.0.2 | FSEvents instead of polling (optional) |
+| Pillow (pip) | 11.3.0 | contact sheets, trimming Quick Look padding (optional) |
+| Mol* | 5.10.1 (fetched once from jsDelivr into `~/.claude/imgwatch/vendor/`) | structures |
 | ffmpeg | 8.0.1 (Homebrew, `/opt/homebrew/bin/ffmpeg`) | video lane |
 | plotly | 6.4.0 | only for making test figures |
 
@@ -34,6 +47,7 @@ Pip gotchas seen with Anaconda:
 git clone <this repo> ~/src/claude-imgwatch
 ~/src/claude-imgwatch/install.sh -n    # dry run: shows what it would back up / link / add
 ~/src/claude-imgwatch/install.sh
+imgwatch --doctor                       # re-check any time
 ```
 
 `install.sh` is idempotent. It:
@@ -44,22 +58,24 @@ git clone <this repo> ~/src/claude-imgwatch
    paths is moved to `~/bin/backups/imgwatch_pre-repo_<stamp>/` first.
 3. Copies `~/.claude/settings.json` to `~/.claude/backups/settings.json.<stamp>`, then *adds* the
    two hook entries if they are not there. Other hooks and settings are left alone.
+4. If no iTerm2 profile named `imgbrowser` exists, installs one as a Dynamic Profile
+   (`~/Library/Application Support/iTerm2/DynamicProfiles/imgwatch.json`, from
+   `iterm2/imgbrowser.dynamic-profile.json`; the key that makes it a browser is
+   `"Custom Command": "Browser"`). An existing profile of that name is never touched.
+5. Runs `imgwatch --doctor`.
 
 Updating later = `git pull` (the symlinks pick it up; the next new Claude session uses it).
 
 ### iTerm2 setup (manual, once)
-1. **Settings → General → Magic → Enable Python API** (browser lane). The `iterm2` module then
-   connects without a prompt; the first `osascript` call may trigger a macOS Automation prompt
-   for "iTerm2 controlling iTerm2": allow it (pane splitting needs it).
-2. **A Browser-type profile named `imgbrowser`**: Settings → Profiles → `+` → set the profile
-   type to *Browser* → name it `imgbrowser`. Nothing else needs changing. In the plist this shows
-   as `"Custom Command": "Browser"`. A Dynamic Profile with that key is in
-   `iterm2/imgbrowser.dynamic-profile.json` (copy to
-   `~/Library/Application Support/iTerm2/DynamicProfiles/`). **Untested**: the GUI route is the
-   one known to work. Either way, check with
-   `/Applications/iTerm.app/Contents/Resources/utilities/it2 profile list`.
-   No browser profile? Set `IMGWATCH_BROWSER_PROFILE=` (empty) in the config and HTML falls back
-   to headless screenshots (or a clickable link without selenium).
+**Settings → General → Magic → Enable Python API** (browser lane). The `iterm2` module then
+connects without a prompt; the first `osascript` call may trigger a macOS Automation prompt for
+"iTerm2 controlling iTerm2": allow it (pane splitting needs it).
+
+The `imgbrowser` Browser profile is created by `install.sh` (tested: the Dynamic Profile works
+exactly like one made in Settings → Profiles → `+` → type *Browser*). Check with
+`/Applications/iTerm.app/Contents/Resources/utilities/it2 profile list`. No browser profile
+wanted? Set `IMGWATCH_BROWSER_PROFILE=` (empty) in the config and HTML/structures fall back to
+headless screenshots (or a clickable link without selenium).
 
 ## How it works
 
@@ -109,21 +125,37 @@ claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 wi
 and `exec`s `$IMGWATCH_PYTHON imgwatch.py`. The watcher loop, every `--interval` (1 s):
 - **Queue**: reads new bytes since the last offset (resets if the file shrank), skips lines
   whose session id isn't `--session`, and shows every remaining path, *even if already shown*.
-- **Polling**: scans the session's scratch dir(s) `/private/tmp/claude-<uid>/*/<session_id>`
-  (re-globbed every poll since it appears lazily) plus the cwd unless the cwd is `~` (never
-  deep-scans home). Depth `--depth` 5; skips dot-dirs, `node_modules`, `.git`, `__pycache__`,
-  `Library`. Files present at start are baselined (not replayed); new or changed mtime → shown.
-- **Settle**: waits up to 10 × 0.3 s for the file size to stop changing before drawing.
-- **Owner check**: `os.kill(owner, 0)`; gone → exit.
+- **Watching**: the session's scratch dir(s) `/private/tmp/claude-<uid>/*/<session_id>`
+  (re-globbed every loop since it appears lazily) plus the cwd unless the cwd is `~` (never
+  watches all of home). With `watchdog` installed this uses macOS FSEvents (one recursive watch
+  per root, events filtered to media files), so a big project cwd costs nothing between changes;
+  without it (or with `--poll`) it rescans every second. Depth `--depth` 5; skips dot-dirs,
+  `node_modules`, `.git`, `__pycache__`, `Library`. Existing files are never replayed; new or
+  changed mtime → shown.
+- **Batching**: new files are collected until 0.5 s pass without another (max 3 s), then the
+  sizes must stop changing (max 3 s). More than `--burst` (6) stills in one batch become one
+  contact sheet (3–5 columns, file names under each tile; needs Pillow, else the last 3 are
+  drawn and the rest listed).
+- **Owner check**: `os.kill(owner, 0)`; gone → exit. On exit (owner gone, SIGTERM from `/clear`,
+  SIGHUP when the pane is closed, Ctrl-C) it also closes its browser pane (`--keep-browser`
+  to leave it) and deletes the pane's state file.
+- **Housekeeping at start**: cache files older than `--cache-days` (7) are deleted, then the
+  oldest until the cache is under `--cache-mb` (500); the queue is cut to its last 64 kB once it
+  passes 1 MB (other watchers notice it shrank and continue from the new end); stale
+  `browser_session_*` files (> 1 day) are removed.
 - **Resize**: SIGWINCH sets a flag; after 0.4 s with no further resize it clears screen *and*
   scrollback (`ESC]1337;ClearScrollback`, because iTerm2 keeps stale, mis-sized images there) and
   redraws the last `--keep` (4) items, since inline images are sized at draw time.
 
-Rendering per type (each item gets a cyan header: name, time, folder):
+Rendering per type (each item gets a cyan header: name, time, folder; name and folder are
+OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder in Finder):
 - **Stills** `.png .jpg .jpeg .gif .webp .tif .tiff .bmp`: `imgcat -l -W <width>` (iTerm2's
   bundled `/Applications/iTerm.app/Contents/Resources/utilities/imgcat`). `-l` = legacy
   single-sequence mode. The multipart protocol garbles when two writers interleave.
-- **SVG**: rasterised with Quick Look (`qlmanage -t -s 1200`) into `$TMPDIR`, then imgcat.
+- **SVG**: rasterised with Quick Look (`qlmanage -t -s 1200`), padding trimmed (Quick Look pads
+  to a square), cached, then imgcat.
+- **PDF**: Quick Look renders page 1 the same way; the header says "page 1 of N" (Spotlight's
+  page count, or counted from the file when it isn't indexed, e.g. in /tmp).
 - **Video** `.mp4 .mov .m4v .webm .avi .mkv .mpg .mpeg`: ffmpeg →
   `fps=N,scale=W:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`, loop
   forever, first `--video-seconds` only; iTerm2 animates GIFs inline. Cached in
@@ -148,6 +180,14 @@ Rendering per type (each item gets a cyan header: name, time, folder):
     --enable-unsafe-swiftshader` (not `--disable-gpu`), or Plotly 3D / Mol* screenshot as
     "WebGL is not supported". Cached like video.
   - **link**: prints an OSC 8 `file://` hyperlink (cmd-click opens the default browser).
+- **Structures** `.pdb .ent .cif .mmcif .bcif .sdf .mol .mol2`: a self-contained Mol* page
+  (`cache/<hash>_<name>.html`: Mol* JS/CSS inlined, the structure embedded as text or, for
+  BinaryCIF, base64 → `Uint8Array`, loaded with `viewer.loadStructureFromData`) goes through the
+  same HTML lanes. Embedding avoids `file://` fetches, which the browser pane may block. Mol* is
+  downloaded once from jsDelivr (`IMGWATCH_MOLSTAR_VERSION`, default 5.10.1). Minimal UI, dark
+  background, sequence panel on. In link mode the link opens that page in your browser.
+  The browser pane is only ever reused (or closed) if it is in the same iTerm2 tab as the
+  watcher, so one session can never take over another's.
 
 ### Flags (imgwatch)
 | Flag | Default | |
@@ -163,16 +203,38 @@ Rendering per type (each item gets a cyan header: name, time, folder):
 | `--video-seconds` / `--video-fps` / `--video-px` / `--no-video` | 8 / 10 / 720 / off | video preview |
 | `--html-mode` | auto | `browser`, `shot`, `link`, `off` |
 | `--browser-profile` | `$IMGWATCH_BROWSER_PROFILE` | iTerm2 Browser profile name |
-| `--shot-wait` / `--shot-px` / `--html-max-mb` | 2 / 1400 / 40 | screenshot lane |
+| `--shot-wait` / `--shot-px` / `--html-max-mb` | 2 / 1400 / 40 | screenshot lane; size cap also applies to structures |
+| `--keep-browser` | off | leave the browser pane open on exit |
+| `--poll` | off | poll even if watchdog is installed |
+| `--burst N` | 6 | more than N stills together → contact sheet (0 = never) |
+| `--cache-days` / `--cache-mb` | 7 / 500 | cache pruning at start |
+| `-V/--version` | | print commit + date (also in the banner) |
+| `--doctor` | | check the installation (below) |
+
+### `imgwatch --doctor`
+Checks, each reported ok / warn / FAIL (exit 1 on any FAIL): config and interpreter; iTerm2
+version (3.7+ for browser panes) and imgcat; Python modules (`iterm2`, `selenium`, `watchdog`,
+Pillow); ffmpeg; Chrome; Mol* cache; iTerm2 Python API enabled; the browser profile exists and
+is Browser-type; both hooks are in `settings.json`, executable, and are this repo's copies;
+`~/bin` links point here; the enqueue hook's extension list matches what imgwatch handles; and
+it starts a throwaway watcher to prove the autostart hook's `pgrep` pattern matches it.
 
 ### Config (`~/.config/imgwatch/config`, see `config.example`)
 `IMGWATCH_PYTHON`, `IMGWATCH_BROWSER_PROFILE` (default `imgbrowser`; empty = no browser lane),
-`IMGPANE_WIDTH`. These have to live here: env vars in `~/.zshrc` do **not** reach the pane,
+`IMGPANE_WIDTH`, optionally `IMGWATCH_MOLSTAR_VERSION`. These have to live here: env vars in `~/.zshrc` do **not** reach the pane,
 which runs imgwatch without a login shell.
 
 ### Runtime state (`~/.claude/imgwatch/`)
 `queue` (append-only, shared by all sessions; safe to truncate any time), `cache/` (GIF/PNG/HTML
-previews; safe to delete), `browser_session_<session id>` (id of that session's reusable browser pane; `browser_session` without `--session`).
+previews, Mol* pages, contact sheets; pruned at start; safe to delete), `vendor/` (Mol*), `browser_session_<session id>` (id of that session's reusable browser pane; `browser_session` without `--session`).
+
+### Other terminals (experimental, untested)
+The pane opener and image drawing have branches for **WezTerm** (iTerm2 image protocol written
+directly; split with `wezterm cli split-pane`) and **kitty / Ghostty** (kitty graphics protocol,
+PNG chunks; GIFs show their first frame; kitty splits with `kitty @ launch --location=vsplit`,
+which needs `allow_remote_control` in kitty.conf; Ghostty has no split CLI, so start
+`imgwatch --owner … --session …` in a split yourself). There are no browser panes outside
+iTerm2: HTML and structures fall back to screenshots. None of this has been run yet.
 
 ## Test checklist
 1. Start `claude` in iTerm2: a right pane titled imgwatch opens and focus stays on the left.
@@ -182,10 +244,12 @@ previews; safe to delete), `browser_session_<session id>` (id of that session's 
 4. Ask for a Plotly HTML (2D and 3D): it opens in a browser pane below imgwatch, hover/rotate
    work, and it refits when you drag the divider.
 5. An mp4 (e.g. a matplotlib animation; even pixel dimensions or libx264 fails): plays as a GIF.
+   A multi-page PDF: page 1 with "page 1 of N". Ten PNGs written at once: one contact sheet.
+   A `.pdb`/`.cif`/`.sdf`: rotatable Mol* view in the browser pane.
 6. Drag the divider: the pane clears and redraws the last 4 items at the new width.
-7. `/clear` → old pane closes, new one opens. Quit Claude → pane closes. Two Claude tabs → each
-   pane shows only its own session's media.
+7. `/clear` → old pane (and its browser pane) closes, new one opens. Quit Claude → both close.
+   Two Claude tabs → each pane shows only its own session's media, in its own browser pane.
 
 ## Uninstall
-Remove the two hook entries from `~/.claude/settings.json`, delete the four symlinks and
-`~/.config/imgwatch`, `~/.claude/imgwatch`. Pre-install files are in `~/bin/backups/imgwatch_pre-repo_*`.
+Remove the two hook entries from `~/.claude/settings.json`, delete the four symlinks,
+`~/.config/imgwatch`, `~/.claude/imgwatch` and (if installed) `DynamicProfiles/imgwatch.json`. Pre-install files are in `~/bin/backups/imgwatch_pre-repo_*`.

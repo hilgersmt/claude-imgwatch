@@ -62,6 +62,29 @@ json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")
 PY
 fi
 
-say "iTerm2 (manual, see README)"
-echo "  - Settings > General > Magic > Enable Python API"
-echo "  - Browser-type profile named '${IMGWATCH_BROWSER_PROFILE-imgbrowser}' (GUI, or iterm2/imgbrowser.dynamic-profile.json)"
+say "iTerm2 browser profile"
+prof=${IMGWATCH_BROWSER_PROFILE-imgbrowser}
+dyn="$HOME/Library/Application Support/iTerm2/DynamicProfiles"
+if [ -z "$prof" ]; then echo "  (browser lane disabled in config)"
+elif "$py" - "$prof" <<'PY'
+import json, pathlib, plistlib, sys
+name, home = sys.argv[1], pathlib.Path.home()
+names = []
+pl = home / "Library/Preferences/com.googlecode.iterm2.plist"
+if pl.exists():
+    names += [p.get("Name") for p in plistlib.load(open(pl, "rb")).get("New Bookmarks", [])]
+d = home / "Library/Application Support/iTerm2/DynamicProfiles"
+for f in d.glob("*") if d.exists() else []:
+    try: names += [p.get("Name") for p in json.loads(f.read_text()).get("Profiles", [])]
+    except Exception: pass
+sys.exit(0 if name in names else 1)
+PY
+then echo "  ok   profile '$prof' exists"
+else
+  echo "  new  $dyn/imgwatch.json (Browser profile '$prof')"
+  if [ -z "$dry" ]; then mkdir -p "$dyn"; sed "s/\"Name\": \"imgbrowser\"/\"Name\": \"$prof\"/" "$repo/iterm2/imgbrowser.dynamic-profile.json" > "$dyn/imgwatch.json"; fi
+fi
+
+say "check"
+if [ -n "$dry" ]; then echo "  (dry run: would run imgwatch --doctor)"; else ~/bin/imgwatch --doctor || true; fi
+echo "Manual, once: iTerm2 > Settings > General > Magic > Enable Python API (browser lane)."

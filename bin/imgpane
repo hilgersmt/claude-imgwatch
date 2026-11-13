@@ -1,5 +1,5 @@
 #!/bin/bash
-# imgpane: split the current iTerm2 pane vertically and run imgwatch in the new (right) pane.
+# imgpane: split the current iTerm2 (or WezTerm/kitty) pane vertically and run imgwatch in the new (right) pane.
 # Runs imgwatch directly (no interactive shell); focus stays in the original pane and the
 # pane closes when imgwatch exits.
 # Usage: imgpane [imgwatch args...]   e.g.  imgpane -w 80%  ~/figs
@@ -8,8 +8,25 @@ set -a; [ -f ~/.config/imgwatch/config ] && . ~/.config/imgwatch/config; set +a
 args=$(printf ' %q' "$@")
 here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 cmd="cd $(printf %q "$PWD") && $(printf %q "$here/imgwatch")$args"
-uuid=${ITERM_SESSION_ID#*:}
 pw=${IMGPANE_WIDTH:-33}
+
+# Experimental (untested): WezTerm and kitty split through their own CLIs. No browser pane there;
+# HTML and structures fall back to headless screenshots.
+case "$TERM_PROGRAM" in
+  WezTerm)
+    size=(--percent "${pw%c}"); [[ $pw == *c ]] && size=(--cells "${pw%c}")
+    wezterm cli split-pane --pane-id "$WEZTERM_PANE" --right "${size[@]}" --cwd "$PWD" -- \
+      /bin/zsh -c "$cmd" >/dev/null && wezterm cli activate-pane --pane-id "$WEZTERM_PANE"
+    exit ;;
+  iTerm.app) ;;
+  *)
+    if [ -n "$KITTY_WINDOW_ID" ]; then  # needs allow_remote_control (and listen_on) in kitty.conf
+      kitty @ launch --location=vsplit --keep-focus --cwd="$PWD" /bin/zsh -c "$cmd" >/dev/null
+      exit
+    fi ;;
+esac
+
+uuid=${ITERM_SESSION_ID#*:}
 osascript - "$uuid" "$cmd" "$pw" <<'APPLESCRIPT'
 on run argv
   set theId to item 1 of argv
