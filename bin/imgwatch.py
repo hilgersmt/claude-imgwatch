@@ -40,7 +40,13 @@ PDF_EXTS = {".pdf"}
 STRUCT_FORMATS = {".pdb": "pdb", ".ent": "pdb", ".cif": "mmcif", ".mmcif": "mmcif", ".bcif": "mmcif",
                   ".sdf": "sdf", ".mol": "mol", ".mol2": "mol2"}
 STRUCT_EXTS = set(STRUCT_FORMATS)
-EXTS = STILL_EXTS | VIDEO_EXTS | HTML_EXTS | PDF_EXTS | STRUCT_EXTS
+# Compounds: SMILES lists always, and 2D or multi-molecule SDF/MOL files, become an RDKit grid
+# (a 3D single molecule still goes to Mol*).
+SMILES_EXTS = {".smi", ".smiles"}
+PSE_EXTS = {".pse"}  # PyMOL sessions: ray-traced snapshot via headless PyMOL
+# Office/iWork: Quick Look renders the first slide/page natively
+OFFICE_EXTS = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".key", ".pages", ".numbers"}
+EXTS = STILL_EXTS | VIDEO_EXTS | HTML_EXTS | PDF_EXTS | STRUCT_EXTS | SMILES_EXTS | PSE_EXTS | OFFICE_EXTS
 FFMPEG = next((f for f in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg")
                if os.path.exists(f)), "ffmpeg")
 MOLSTAR_VERSION = os.environ.get("IMGWATCH_MOLSTAR_VERSION", "5.10.1")
@@ -75,6 +81,9 @@ ap.add_argument("--shot-wait", type=float, default=2.0, metavar="S",
 ap.add_argument("--shot-px", type=int, default=1400, metavar="W", help="screenshot viewport width (default 1400)")
 ap.add_argument("--html-max-mb", type=float, default=40.0, metavar="MB",
                 help="skip .html / structure files bigger than this (default 40)")
+ap.add_argument("--pymol", metavar="CMD", default=os.environ.get("IMGWATCH_PYMOL"),
+                help="python that can 'import pymol', for .pse snapshots (env IMGWATCH_PYMOL; default: this python)")
+ap.add_argument("--max-mols", type=int, default=48, metavar="N", help="molecules drawn per compound grid (default 48)")
 ap.add_argument("--cache-days", type=float, default=7, metavar="D", help="prune cache files older than D days (default 7)")
 ap.add_argument("--cache-mb", type=float, default=500, metavar="MB", help="cap the cache at MB, oldest first (default 500)")
 ap.add_argument("-V", "--version", action="store_true", help="print the version and exit")
@@ -276,6 +285,9 @@ def doctor():
             out("FAIL", f"{ev} hook {name} not in settings.json"); continue
         real = Path(os.path.expanduser(hit[0])).resolve()
         out("ok" if real.exists() and os.access(real, os.X_OK) else "FAIL", f"{ev} hook -> {real}")
+        mt = [g.get("matcher", "") for g in hooks.get(ev, []) for h in g.get("hooks", []) if h.get("command") == hit[0]]
+        if ev == "PostToolUse" and mt and mt[0] not in ("", "*"):
+            out("warn", f"  enqueue hook only runs for '{mt[0]}' (Bash/MCP figures not picked up; re-run install.sh)")
         if real.exists() and HERE.parent not in real.parents:
             out("warn", f"  {name} is not the copy in this repo ({HERE.parent})")
     for b in ("imgwatch", "imgpane"):
@@ -422,7 +434,7 @@ def video_to_gif(p):
 
 
 def ql_png(p, px=1200):
-    """Quick Look thumbnail (SVG, PDF first page) as a PNG in the cache."""
+    """Quick Look thumbnail (SVG, PDF first page, Office first slide/page) as a PNG in the cache."""
     key = cache_key(p, "ql", px)
     if not key:
         return None
@@ -434,7 +446,8 @@ def ql_png(p, px=1200):
         subprocess.run(["qlmanage", "-t", "-s", str(px), "-o", str(tmp), p], capture_output=True)
         got = tmp / (os.path.basename(p) + ".png")
         if got.exists():
-            trim(got)
+            if p.lower().endswith(".svg"):  # only SVGs get square padding; never crop a page's margins
+                trim(got)
             got.replace(out)
         shutil.rmtree(tmp, ignore_errors=True)
     return str(out) if out.exists() else None
@@ -462,6 +475,102 @@ def pdf_pages(p):
             return len(re.findall(rb"/Type\s*/Page[^s]", Path(p).read_bytes())) or None
         except OSError:
             return None
+
+
+def read_mols(p):
+    """Molecules + names from a SMILES list or an SDF/MOL file; None if RDKit is missing."""
+    try:
+        from rdkit import Chem, RDLogger
+    except ImportError:
+        return None
+    RDLogger.DisableLog("rdApp.*")
+    mols, names, bad = [], [], 0
+    ext = os.path.splitext(p)[1].lower()
+    if ext in SMILES_EXTS:
+        for i, line in enumerate(Path(p).read_text(errors="replace").splitlines()):
+            parts = line.replace(",", " ").replace("\t", " ").split()
+            if not parts or parts[0].startswith("#") or parts[0].lower() in ("smiles", "smi"):
+                continue
+            m = Chem.MolFromSmiles(parts[0].split(" |")[0])
+            if m is None:
+                bad += 1; continue
+            mols.append(m); names.append(" ".join(parts[1:])[:40] or f"#{i + 1}")
+    else:
+        sup = Chem.SDMolSupplier(p) if ext == ".sdf" else [Chem.MolFromMolFile(p)]
+        for i, m in enumerate(sup):
+            if m is None:
+                bad += 1; continue
+            mols.append(m); names.append((m.GetProp("_Name") if m.HasProp("_Name") else "")[:40] or f"#{i + 1}")
+    return mols, names, bad
+
+
+def is_3d_single(p):
+    """A single molecule with real 3D coordinates (goes to Mol*); anything else gets a 2D grid."""
+    got = read_mols(p)
+    if not got or len(got[0]) != 1:
+        return False
+    m = got[0][0]
+    if not m.GetNumConformers():
+        return False
+    conf = m.GetConformer()
+    return conf.Is3D() and any(abs(z) > 1e-3 for _, _, z in conf.GetPositions().tolist())
+
+
+def compound_grid(p):
+    """RDKit grid of a compound file in the pane's dark style (transparent, white carbons)."""
+    got = read_mols(p)
+    if got is None:
+        warn("RDKit not installed — cannot draw compounds"); return None, 0, 0
+    mols, names, bad = got
+    if not mols:
+        return None, 0, bad
+    key = cache_key(p, "grid", a.max_mols)
+    out = CACHE / f"grid_{key}.png"
+    if not out.exists():
+        from rdkit.Chem import AllChem
+        from rdkit.Chem.Draw import rdMolDraw2D
+        shown = mols[:a.max_mols]
+        for m in shown:
+            AllChem.Compute2DCoords(m)
+        cols = min(len(shown), 4)
+        rows = (len(shown) + cols - 1) // cols
+        w, h = 320, 240
+        d = rdMolDraw2D.MolDraw2DCairo(cols * w, rows * h, w, h)
+        o = d.drawOptions()
+        o.setBackgroundColour((0, 0, 0, 0)); o.updateAtomPalette({6: (1, 1, 1, 1)})
+        o.setLegendColour((0.85, 0.85, 0.85, 1)); o.legendFontSize = 16
+        d.DrawMolecules(shown, legends=names[:a.max_mols])
+        d.FinishDrawing()
+        CACHE.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(d.GetDrawingText())
+    return str(out), len(mols), bad
+
+
+def pse_png(p):
+    """Ray-traced snapshot of a PyMOL session from its saved view, via headless PyMOL."""
+    key = cache_key(p, "pse")
+    if not key:
+        return None
+    out = CACHE / f"pse_{key}.png"
+    if out.exists():
+        return str(out)
+    CACHE.mkdir(parents=True, exist_ok=True)
+    script = ("import sys, pymol; pymol.finish_launching(['pymol', '-qc']); from pymol import cmd; "
+              "cmd.load(sys.argv[1]); cmd.set('ray_opaque_background', 1); "
+              "cmd.png(sys.argv[2], width=1200, height=900, dpi=150, ray=1)")
+    py = a.pymol or sys.executable
+    try:
+        r = subprocess.run([py, "-c", script, p, str(out)], capture_output=True, timeout=120,
+                           cwd=str(CACHE))  # never write next to the session (read-only folders)
+    except FileNotFoundError:
+        warn(f"PyMOL python not found: {py}"); return None
+    except subprocess.TimeoutExpired:
+        warn("PyMOL took > 120 s — snapshot skipped"); return None
+    if not out.exists():
+        err = (r.stderr or b"").decode(errors="replace").strip().splitlines()
+        warn(f"PyMOL could not render: {err[-1][:80] if err else 'no output (is pymol importable?)'}")
+        return None
+    return str(out)
 
 
 def contact_sheet(paths):
@@ -854,6 +963,8 @@ def render(item, ts):
         mb = os.path.getsize(p) / 1e6
         if mb > a.html_max_mb:
             warn(f"skipped: {mb:.0f} MB > --html-max-mb {a.html_max_mb:g}"); return
+        if ext in (".sdf", ".mol") and not is_3d_single(p):
+            return show_grid(p)
         if ext in STRUCT_EXTS:
             if html_mode() == "off":
                 return
@@ -885,7 +996,27 @@ def render(item, ts):
         src = ql_png(p)
         if src is None:
             return
+    elif ext in SMILES_EXTS:
+        return show_grid(p)
+    elif ext in PSE_EXTS:
+        print("\033[2m  PyMOL session → ray-traced snapshot (saved view)\033[0m", flush=True)
+        src = pse_png(p)
+        if src is None:
+            return
+    elif ext in OFFICE_EXTS:
+        print("\033[2m  first slide/page (Quick Look) · cmd-click the name to open\033[0m", flush=True)
+        src = ql_png(p)
+        if src is None:
+            warn("Quick Look could not render this file"); return
     draw_image(src)
+
+
+def show_grid(p):
+    src, n, bad = compound_grid(p)
+    more = f", showing {a.max_mols}" if n > a.max_mols else ""
+    print(f"\033[2m  {n} molecule{'s' if n != 1 else ''}{more}" + (f", {bad} unreadable" if bad else "") + "\033[0m", flush=True)
+    if src:
+        draw_image(src)
 
 
 def banner():

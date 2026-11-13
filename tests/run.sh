@@ -63,6 +63,27 @@ ATOM      7  C   THR A   2      14.164  10.785   7.379  1.00  5.80           C
 ATOM      8  O   THR A   2      14.993   9.862   7.443  1.00  6.94           O
 END
 """)
+try:
+    from rdkit import Chem; from rdkit.Chem import AllChem
+    open(f"{d}/hits.smi", "w").write("smiles name\nCC(=O)Oc1ccccc1C(=O)O aspirin\nCN1C=NC2=C1C(=O)N(C(=O)N2C)C caffeine\nnot_a_smiles broken\n")
+    w = Chem.SDWriter(f"{d}/series_2d.sdf")
+    for s in ("c1ccccc1O", "CCO", "CC(=O)N"):
+        m = Chem.MolFromSmiles(s); AllChem.Compute2DCoords(m); w.write(m)
+    w.close()
+    m = Chem.AddHs(Chem.MolFromSmiles("CC(=O)Oc1ccccc1C(=O)O")); AllChem.EmbedMolecule(m, randomSeed=3)
+    w = Chem.SDWriter(f"{d}/one_3d.sdf"); w.write(m); w.close()
+except ImportError:
+    pass
+try:
+    import pymol; pymol.finish_launching(["pymol", "-qc"]); from pymol import cmd
+    cmd.fab("ACDEFGHIK", "pep", ss=1); cmd.show_as("cartoon"); cmd.save(f"{d}/pep.pse")
+except Exception:
+    pass
+try:
+    from pptx import Presentation
+    p = Presentation(); p.slides.add_slide(p.slide_layouts[0]).shapes.title.text = "deck"; p.save(f"{d}/deck.pptx")
+except ImportError:
+    pass
 PY
 command -v ffmpeg >/dev/null && ffmpeg -v error -f lavfi -i testsrc=duration=2:size=160x120:rate=10 -pix_fmt yuv420p "$T/fix/clip.mp4"
 
@@ -73,6 +94,18 @@ check "shell scripts parse" "bash -n '$repo/bin/imgpane' && bash -n '$repo/bin/i
 check "-V prints a version" "'$repo/bin/imgwatch' -V | grep -q '^imgwatch '"
 q=$HOME/.claude/imgwatch/queue
 enq() { printf '{"session_id":"S","tool_input":{"file_path":"%s"}}' "$1" | "$repo/hooks/imgwatch-enqueue.sh"; }
+hook() { "$repo/hooks/imgwatch-enqueue.sh"; }
+mkdir -p "$T/out dir"; echo x > "$T/out dir/fig 1.png"; echo x > "$T/stale.png"; touch -t 202001010000 "$T/stale.png"
+echo x > "$T/pymol.png"; mkdir -p "$HOME/.claude/imgwatch/cache"; echo x > "$HOME/.claude/imgwatch/cache/own.png"
+rm -f "$q"
+"$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Bash","tool_input":{"command":"python plot.py"},"tool_response":{"stdout":"saved "+sys.argv[1]+"/out dir/fig 1.png"}}))' "$T" | hook
+"$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"mcp__pymol__parse_and_execute","tool_input":{"command":"png "+sys.argv[1]+"/pymol.png, ray=1"},"tool_response":"ok"}))' "$T" | hook
+check "hook: Bash output path with spaces" "grep -qF '$T/out dir/fig 1.png' '$q'"
+check "hook: path in an MCP tool's input (PyMOL png)" "grep -qF '$T/pymol.png' '$q'"
+rm -f "$q"
+"$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":sys.argv[1]+"/stale.png "+sys.argv[2]}}))' "$T" "$HOME/.claude/imgwatch/cache/own.png" | hook
+"$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Grep","tool_input":{},"tool_response":{"filenames":[sys.argv[1]+"/pymol.png"]}}))' "$T" | hook
+check "hook: ignores stale files, its own cache, Grep output" "[ ! -s '$q' ]"
 rm -f "$q"; enq /a/x.png; enq /a/y.bcif; enq /a/z.pdf; enq /a/w.mp4; enq /a/notes.txt; enq /a/data.csv
 check "enqueue hook: media in, text out" "[ \"\$(cut -f2 '$q' | tr '\n' ' ')\" = '/a/x.png /a/y.bcif /a/z.pdf /a/w.mp4 ' ]"
 check "enqueue hook: line format session<TAB>path" "head -1 '$q' | grep -q \$'^S\t/a/x.png\$'"
@@ -87,6 +120,16 @@ check "settings.json has both hooks" "grep -q imgwatch-enqueue.sh '$HOME/.claude
 check "browser profile created" "grep -q '\"Custom Command\": \"Browser\"' '$HOME/Library/Application Support/iTerm2/DynamicProfiles/imgwatch.json'"
 "$repo/install.sh" > "$T/install2.log" 2>&1
 check "install.sh is idempotent" "! grep -qE '^  (link|add|new|bak) ' '$T/install2.log'"
+"$py" - "$HOME/.claude/settings.json" <<'PY'
+import json, sys; p = sys.argv[1]; d = json.load(open(p))
+for g in d["hooks"]["PostToolUse"]:
+    if any(h["command"].endswith("imgwatch-enqueue.sh") for h in g["hooks"]): g["matcher"] = "Read|Write"
+json.dump(d, open(p, "w"))
+PY
+"$repo/bin/imgwatch" --doctor > "$T/doctor0.log" 2>&1
+check "doctor: warns about an old Read|Write-only hook" "grep -q 'only runs for' '$T/doctor0.log'"
+"$repo/install.sh" > "$T/install3.log" 2>&1
+check "install.sh widens the old Read|Write matcher" "grep -q 'now runs for all tools' '$T/install3.log' && ! grep -q 'Read|Write' '$HOME/.claude/settings.json'"
 "$repo/bin/imgwatch" --doctor > "$T/doctor.log" 2>&1
 check "doctor: clean on a fresh install" "[ $? -eq 0 ] && ! grep -q FAIL '$T/doctor.log'"
 check "doctor: pgrep pattern matches the watcher" "grep -q 'pgrep pattern matches' '$T/doctor.log'"
@@ -132,6 +175,22 @@ if [ -f "$T/fix/clip.mp4" ]; then
   cp "$T/fix/clip.mp4" "$T/watch/"
   check "video: animated-GIF preview" "waitfor 'preview ' 30 && ls '$c'/*.gif >/dev/null 2>&1"
 else skp "video (no ffmpeg)"; fi
+if [ -f "$T/fix/hits.smi" ]; then
+  cp "$T/fix/hits.smi" "$T/watch/"
+  check "SMILES list: grid, unreadable counted" "waitfor '2 molecules, 1 unreadable' 10 && ls '$c'/grid_*.png >/dev/null 2>&1"
+  cp "$T/fix/series_2d.sdf" "$T/watch/"
+  check "2D multi-molecule SDF: grid" "waitfor '3 molecules' 10"
+  cp "$T/fix/one_3d.sdf" "$T/watch/"
+  check "single 3D SDF: Mol*" "waitfor 'one_3d.sdf.html' 20"
+else skp "compounds (no RDKit)"; fi
+if [ -f "$T/fix/pep.pse" ]; then
+  cp "$T/fix/pep.pse" "$T/watch/"
+  check "PyMOL session: ray-traced snapshot" "waitfor 'ray-traced snapshot' 8 && for i in \$(seq 60); do ls '$c'/pse_*.png >/dev/null 2>&1 && break; sleep 0.5; done; ls '$c'/pse_*.png >/dev/null 2>&1"
+else skp "PyMOL session (pymol not importable)"; fi
+if [ -f "$T/fix/deck.pptx" ]; then
+  cp "$T/fix/deck.pptx" "$T/watch/"
+  check "PowerPoint: first slide via Quick Look" "waitfor 'first slide/page' 10"
+else skp "Office (no python-pptx to make a fixture)"; fi
 printf 'S1\t%s\n' "$T/fix/single.png" >> "$q"; printf 'OTHER\t%s\n' "$T/fix/burst_0.png" >> "$q"
 sleep 3
 check "queue: own session's file shown again" "[ \$(log | grep -c 'single.png') -ge 2 ]"

@@ -49,12 +49,25 @@ if [ -n "$dry" ]; then echo "  (dry run: would merge hooks into $s)"; else
 import json, os, sys
 p = sys.argv[1]
 d = json.load(open(p)) if os.path.exists(p) else {}
-want = {"PostToolUse": ("Read|Write", "~/.claude/hooks/imgwatch-enqueue.sh", 5),
+# the enqueue hook runs on every tool (it reads paths out of Bash/MCP output); older installs had
+# matcher "Read|Write", which is widened here
+want = {"PostToolUse": (None, "~/.claude/hooks/imgwatch-enqueue.sh", 5),
         "SessionStart": (None, "~/.claude/hooks/imgpane-autostart.sh", 10)}
 for ev, (matcher, cmd, to) in want.items():
     groups = d.setdefault("hooks", {}).setdefault(ev, [])
-    if any(h.get("command") == cmd for g in groups for h in g.get("hooks", [])):
-        print(f"  ok   {ev}: {cmd}"); continue
+    mine = [g for g in groups if any(h.get("command") == cmd for h in g.get("hooks", []))]
+    if mine:
+        g = mine[0]
+        if g.get("matcher", "") not in ("", "*", matcher or ""):
+            if len(g["hooks"]) == 1:
+                g.pop("matcher")
+            else:  # shared group: move our hook into its own all-tools group
+                g["hooks"] = [h for h in g["hooks"] if h.get("command") != cmd]
+                groups.append({"hooks": [{"type": "command", "command": cmd, "timeout": to}]})
+            print(f"  fix  {ev}: {cmd} now runs for all tools")
+        else:
+            print(f"  ok   {ev}: {cmd}")
+        continue
     g = {"hooks": [{"type": "command", "command": cmd, "timeout": to}]}
     if matcher: g = {"matcher": matcher, **g}
     groups.append(g); print(f"  add  {ev}: {cmd}")

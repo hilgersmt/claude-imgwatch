@@ -10,9 +10,16 @@ split pane that shows the files that session produces or opens, as they appear:
 | MP4, MOV, WebM, … | animated-GIF preview of the first 8 s |
 | PDF | first page inline, "page 1 of N", name links to the file |
 | HTML (Plotly, Bokeh, …) | live page in an iTerm2 browser pane |
-| PDB, mmCIF, BinaryCIF, SDF, MOL, MOL2 | interactive Mol* viewer in the browser pane |
+| PDB, mmCIF, BinaryCIF, MOL2, single 3D SDF/MOL | interactive Mol* viewer in the browser pane |
+| SMILES list (`.smi`), 2D or multi-molecule SDF/MOL | RDKit grid, dark style (white carbons), names as legends |
+| PyMOL session (`.pse`) | ray-traced snapshot of the saved view (headless PyMOL) |
+| PowerPoint, Word, Excel, Keynote, Pages, Numbers | first slide/page (Quick Look) |
 
 Every header's file name and folder are clickable (cmd-click opens them).
+
+Files show up when Claude reads or writes them, when they appear in the session's scratch dir or
+working dir, **or when a Bash command or MCP tool mentions a media file it just wrote** (a script
+that prints `saved figure to …`, a PyMOL `png …` through an MCP server), wherever that file is.
 
 ![Claude Code on the left; imgwatch pane (top right) playing a GIF the session made; iTerm2 browser pane (bottom right) with a live, rotating Plotly 3D surface](docs/demo.gif)
 
@@ -114,9 +121,16 @@ claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 wi
 - Gives focus back to the Claude pane.
 - Manual use: `imgpane [imgwatch args…]`, e.g. `imgpane -w 80% ~/figs`.
 
-### 3. `hooks/imgwatch-enqueue.sh` (PostToolUse, matcher `Read|Write`)
-- If `tool_input.file_path` has a media extension, appends `session_id<TAB>path` to
-  `~/.claude/imgwatch/queue`. Always exits 0 so it can never block Claude.
+### 3. `hooks/imgwatch-enqueue.sh` (PostToolUse, all tools)
+- Read/Write/Edit: if `tool_input.file_path` has a media extension, appends
+  `session_id<TAB>path` to `~/.claude/imgwatch/queue` (always, even for old files).
+- Bash and `mcp__*` tools: scans the tool input and response text for media extensions; each hit
+  is grown leftwards to the longest string that is an existing file, so paths with spaces work
+  (OneDrive). Queued only if modified in the last 3 minutes and not under `~/.claude/imgwatch`.
+  Other tools (Grep, Glob, …) are ignored, so listings don't flood the pane.
+- Runs with `python -S` (≈17 ms per call); always exits 0 so it can never block Claude.
+  Installs from before this change registered it for `Read|Write` only; `install.sh` widens that
+  and the doctor warns about it.
 - Note that when Claude `Read`s an image it also costs context (vision); writing figures into a
   polled dir shows them for free.
 
@@ -180,7 +194,17 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
     --enable-unsafe-swiftshader` (not `--disable-gpu`), or Plotly 3D / Mol* screenshot as
     "WebGL is not supported". Cached like video.
   - **link**: prints an OSC 8 `file://` hyperlink (cmd-click opens the default browser).
-- **Structures** `.pdb .ent .cif .mmcif .bcif .sdf .mol .mol2`: a self-contained Mol* page
+- **Compounds** `.smi/.smiles` (one `SMILES [name]` per line; header and `#` lines skipped; CXSMILES
+  extensions stripped), and `.sdf/.mol` that are 2D or hold several molecules: RDKit grid, 4 per
+  row, 320×240 panels, transparent background with white carbons, names (or `#n`) as legends;
+  unreadable entries are counted. Needs RDKit in `IMGWATCH_PYTHON`.
+- **PyMOL sessions** `.pse`: `pymol -qc` in a subprocess loads the session and ray-traces
+  1200×900 from its saved view (opaque background, 120 s timeout; PyMOL runs with the cache as
+  its working dir, so nothing is ever written next to the session). Cached by path + mtime.
+- **Office / iWork** `.pptx .ppt .docx .doc .xlsx .xls .key .pages .numbers`: Quick Look's
+  first-slide/page thumbnail (macOS renders these natively, no Office needed). Not trimmed (only
+  SVG thumbnails are, so page margins stay intact).
+- **Structures** `.pdb .ent .cif .mmcif .bcif .mol2` and single 3D `.sdf/.mol`: a self-contained Mol* page
   (`cache/<hash>_<name>.html`: Mol* JS/CSS inlined, the structure embedded as text or, for
   BinaryCIF, base64 → `Uint8Array`, loaded with `viewer.loadStructureFromData`) goes through the
   same HTML lanes. Embedding avoids `file://` fetches, which the browser pane may block. Mol* is
@@ -205,6 +229,8 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
 | `--browser-profile` | `$IMGWATCH_BROWSER_PROFILE` | iTerm2 Browser profile name |
 | `--shot-wait` / `--shot-px` / `--html-max-mb` | 2 / 1400 / 40 | screenshot lane; size cap also applies to structures |
 | `--keep-browser` | off | leave the browser pane open on exit |
+| `--pymol CMD` | `$IMGWATCH_PYMOL` or this python | interpreter that can `import pymol`, for `.pse` |
+| `--max-mols N` | 48 | molecules per compound grid |
 | `--poll` | off | poll even if watchdog is installed |
 | `--burst N` | 6 | more than N stills together → contact sheet (0 = never) |
 | `--cache-days` / `--cache-mb` | 7 / 500 | cache pruning at start |
@@ -221,7 +247,7 @@ it starts a throwaway watcher to prove the autostart hook's `pgrep` pattern matc
 
 ### Config (`~/.config/imgwatch/config`, see `config.example`)
 `IMGWATCH_PYTHON`, `IMGWATCH_BROWSER_PROFILE` (default `imgbrowser`; empty = no browser lane),
-`IMGPANE_WIDTH`, optionally `IMGWATCH_MOLSTAR_VERSION`. These have to live here: env vars in `~/.zshrc` do **not** reach the pane,
+`IMGPANE_WIDTH`, optionally `IMGWATCH_MOLSTAR_VERSION` and `IMGWATCH_PYMOL`. These have to live here: env vars in `~/.zshrc` do **not** reach the pane,
 which runs imgwatch without a login shell.
 
 ### Runtime state (`~/.claude/imgwatch/`)
@@ -243,8 +269,11 @@ touched: syntax; the enqueue hook's filter and line format; `install.sh` on an e
 (links, settings merge, browser profile, idempotent second run, clean doctor including the pgrep
 check); cache/queue pruning; and a headless watcher in link mode fed a PNG, a burst of 8 (contact
 sheet), SVG, a 3-page PDF, HTML, a PDB (Mol* page with the data embedded), an mp4 (GIF preview),
-plus queue lines for its own and another session. Missing optional pieces (ffmpeg, Pillow,
-network for Mol*) are reported as SKIP. Last run on the reference Mac: 26 passed.
+a SMILES list, 2D and 3D SDFs, a PyMOL session and a PowerPoint deck, plus queue lines for its own
+and another session; the hook is fed Bash/MCP/Grep events (paths with spaces, stale files, its own
+cache); an old `Read|Write` hook is widened by `install.sh`. Missing optional pieces (ffmpeg,
+Pillow, RDKit, PyMOL, python-pptx, network for Mol*) are reported as SKIP. Last run on the
+reference Mac: 36 passed.
 
 ## Test checklist (in a real pane)
 1. Start `claude` in iTerm2: a right pane titled imgwatch opens and focus stays on the left.
