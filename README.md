@@ -5,6 +5,8 @@ split pane that shows the images, videos and HTML pages that session produces or
 they appear: PNG/JPEG/GIF/SVG inline, video as an animated GIF preview, and HTML (Plotly
 etc.) as a real interactive page in an iTerm2 browser pane.
 
+![Claude Code on the left; imgwatch pane (top right) playing a GIF the session made; iTerm2 browser pane (bottom right) with a live, rotating Plotly 3D surface](docs/demo.gif)
+
 macOS + iTerm2 only (uses iTerm2's inline-image protocol, AppleScript and Python API).
 
 ## Reference versions (work Mac, 2026-11-13, all verified working together)
