@@ -2,7 +2,9 @@
 
 You are probably on a machine that already has an older, hand-installed imgwatch (plain files in
 `~/bin` and `~/.claude/hooks`, maybe images-only, maybe a different Python path). Your job is to
-**update it to this repo**, not to merge by hand:
+**update it to this repo**, not to merge by hand. When you are walking a person through it,
+follow the `setup-imgwatch` skill in `.claude/skills/` (step by step, verifying each manual step); the
+short version:
 
 1. Inventory what exists: `~/bin/imgwatch`, `~/bin/imgpane`, `~/.claude/hooks/imgpane-autostart.sh`,
    `~/.claude/hooks/imgwatch-enqueue.sh`, the imgwatch/imgpane entries in `~/.claude/settings.json`,

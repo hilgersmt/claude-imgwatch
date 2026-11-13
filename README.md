@@ -26,6 +26,19 @@ that prints `saved figure to …`, a PyMOL `png …` through an MCP server), whe
 macOS + iTerm2 (inline-image protocol, AppleScript, Python API). WezTerm, kitty and Ghostty
 support is experimental and untested (see below).
 
+## Quick start
+```bash
+git clone https://github.com/hilgersmt/claude-imgwatch ~/src/claude-imgwatch
+cd ~/src/claude-imgwatch && ./setup.sh
+```
+`setup.sh` walks you through it in about 10 minutes: picks a Python, offers each optional extra
+(explaining what it's for, installing only if you say yes), installs, then guides you through the two
+manual iTerm2/macOS steps with exact clicks and checks each one worked before moving on, and ends
+with a live demo pane that asks you what you see. Re-run any time; `./setup.sh --demo` repeats just
+the demo. Prefer Claude to drive? Open `claude` in the repo and ask it to set up imgwatch: the repo's
+`setup-imgwatch` skill makes it do the same steps, verifying each one. Unattended installs:
+`./install.sh` (below).
+
 ## Reference versions (work Mac, 2026-11-13, all verified working together)
 
 | Component | Version | Needed for |

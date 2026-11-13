@@ -91,6 +91,7 @@ command -v ffmpeg >/dev/null && ffmpeg -v error -f lavfi -i testsrc=duration=2:s
 echo "static"
 check "imgwatch.py compiles" "'$py' -m py_compile '$repo/bin/imgwatch.py'"
 check "shell scripts parse" "bash -n '$repo/bin/imgpane' && bash -n '$repo/bin/imgwatch' && bash -n '$repo'/hooks/*.sh && bash -n '$repo/install.sh'"
+check "setup.sh parses and refuses to run unattended" "bash -n '$repo/setup.sh' && ! '$repo/setup.sh' </dev/null >/dev/null 2>&1"
 check "-V prints a version" "'$repo/bin/imgwatch' -V | grep -q '^imgwatch '"
 q=$HOME/.claude/imgwatch/queue
 enq() { printf '{"session_id":"S","tool_input":{"file_path":"%s"}}' "$1" | "$repo/hooks/imgwatch-enqueue.sh"; }
