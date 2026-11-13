@@ -2,7 +2,7 @@
 # imgpane: split the current iTerm2 pane vertically and run imgwatch in the new (right) pane.
 # Runs imgwatch directly (no interactive shell); focus stays in the original pane and the
 # pane closes when imgwatch exits.
-# Usage: imgpane [imgwatch args...]   e.g.  imgpane -w 80%  ~/LH/figs
+# Usage: imgpane [imgwatch args...]   e.g.  imgpane -w 80%  ~/figs
 # Pane width: IMGPANE_WIDTH=35 (percent of the tab, default 33) or IMGPANE_WIDTH=60c (columns).
 set -a; [ -f ~/.config/imgwatch/config ] && . ~/.config/imgwatch/config; set +a
 args=$(printf ' %q' "$@")
