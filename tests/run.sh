@@ -108,8 +108,8 @@ rm -f "$q"
 "$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":sys.argv[1]+"/stale.png "+sys.argv[2]}}))' "$T" "$HOME/.claude/imgwatch/cache/own.png" | hook
 "$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Grep","tool_input":{},"tool_response":{"filenames":[sys.argv[1]+"/pymol.png"]}}))' "$T" | hook
 check "hook: ignores stale files, its own cache, Grep output" "[ ! -s '$q' ]"
-rm -f "$q"; enq /a/x.png; enq /a/y.bcif; enq /a/z.pdf; enq /a/w.mp4; enq /a/notes.txt; enq /a/data.csv
-check "enqueue hook: media in, text out" "[ \"\$(cut -f2 '$q' | tr '\n' ' ')\" = '/a/x.png /a/y.bcif /a/z.pdf /a/w.mp4 ' ]"
+rm -f "$q"; enq /a/x.png; enq /a/y.bcif; enq /a/z.pdf; enq /a/w.mp4; enq /a/v.HEIC; enq /a/notes.txt; enq /a/data.csv
+check "enqueue hook: media in, text out" "[ \"\$(cut -f2 '$q' | tr '\n' ' ')\" = '/a/x.png /a/y.bcif /a/z.pdf /a/w.mp4 /a/v.HEIC ' ]"
 check "enqueue hook: line format session<TAB>path" "head -1 '$q' | grep -q \$'^S\t/a/x.png\$'"
 rm -f "$q"
 
@@ -162,6 +162,10 @@ if "$py" -c 'import PIL' 2>/dev/null; then
 else skp "burst (no Pillow)"; fi
 cp "$T/fix/chart.svg" "$T/watch/"
 check "SVG: rasterised by Quick Look" "waitfor 'chart.svg' 8 && sleep 1.5 && [ \$(ls '$c'/*.png 2>/dev/null | grep -vc sheet_) -ge 1 ]"
+if sips -s format heic "$T/fix/single.png" --out "$T/fix/photo.heic" >/dev/null 2>&1; then
+  cp "$T/fix/photo.heic" "$T/watch/"
+  check "HEIC: converted to JPEG with sips" "waitfor 'photo.heic' 8 && sleep 1.5 && ls '$c'/*.jpg >/dev/null 2>&1"
+else skp "HEIC (sips can't write HEIC here)"; fi
 cp "$T/fix/doc.pdf" "$T/watch/"
 check "PDF: page 1 of 3" "waitfor 'page 1 of 3' 10"
 cp "$T/fix/page.html" "$T/watch/"

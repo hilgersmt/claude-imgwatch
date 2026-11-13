@@ -8,7 +8,7 @@
 [ -f ~/.config/imgwatch/config ] && . ~/.config/imgwatch/config
 "${IMGWATCH_PYTHON:-python3}" -S -c '
 import json, os, re, sys, time
-EXTS = (".png",".jpg",".jpeg",".gif",".webp",".svg",".tif",".tiff",".bmp",
+EXTS = (".png",".jpg",".jpeg",".gif",".webp",".svg",".tif",".tiff",".bmp",".heic",".heif",
         ".mp4",".mov",".m4v",".webm",".avi",".mkv",".mpg",".mpeg",
         ".html",".htm",".pdf",
         ".pdb",".ent",".cif",".mmcif",".bcif",".sdf",".mol",".mol2",

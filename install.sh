@@ -24,7 +24,9 @@ say "config"
 cfg=~/.config/imgwatch/config
 if [ -f "$cfg" ]; then echo "  ok   $cfg (kept)"; else
   py=
-  for c in /opt/anaconda3/bin/python /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 || true)"; do
+  # an explicit IMGWATCH_PYTHON (IMGWATCH_PYTHON=~/venv/bin/python ./install.sh, tests/run.sh) wins
+  if [ -n "${IMGWATCH_PYTHON:-}" ] && [ -x "$(command -v "$IMGWATCH_PYTHON")" ]; then py=$(command -v "$IMGWATCH_PYTHON"); fi
+  [ -n "$py" ] || for c in /opt/anaconda3/bin/python /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 || true)"; do
     [ -x "$c" ] && "$c" -c 'import iterm2' 2>/dev/null && { py=$c; break; }
   done
   [ -n "$py" ] || py=$(command -v python3)

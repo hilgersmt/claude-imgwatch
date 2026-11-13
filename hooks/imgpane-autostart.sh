@@ -9,6 +9,9 @@ case "$TERM_PROGRAM" in
 esac
 [ "${CLAUDE_CODE_ENTRYPOINT:-cli}" = cli ] || exit 0      # skip claude -p / SDK runs
 [ -n "$CLAUDE_NO_IMGPANE" ] && exit 0
+# inside screen/tmux (e.g. a detached `claude --remote-control` session) there is no pane to split:
+# ITERM_SESSION_ID is inherited from wherever it was started, so a split would land in that tab
+[ -n "$STY$TMUX" ] && exit 0
 # config: IMGWATCH_PYTHON, IMGWATCH_BROWSER_PROFILE, IMGPANE_WIDTH (env vars in ~/.zshrc do not
 # reach the pane, which runs imgwatch without a shell, so settings live in this file)
 set -a; [ -f ~/.config/imgwatch/config ] && . ~/.config/imgwatch/config; set +a

@@ -5,7 +5,7 @@ split pane that shows the files that session produces or opens, as they appear:
 
 | File | Shown as |
 |---|---|
-| PNG, JPEG, GIF, WebP, TIFF, BMP, SVG | inline image (GIFs animate) |
+| PNG, JPEG, GIF, WebP, TIFF, BMP, SVG, HEIC | inline image (GIFs animate; HEIC via `sips`) |
 | many stills at once | one labelled contact sheet |
 | MP4, MOV, WebM, … | animated-GIF preview of the first 8 s |
 | PDF | first page inline, "page 1 of N", name links to the file |
@@ -116,6 +116,8 @@ claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 wi
 - Only runs when `TERM_PROGRAM=iTerm.app` with an `ITERM_SESSION_ID`, for interactive sessions
   (`CLAUDE_CODE_ENTRYPOINT` unset or `cli`, so `claude -p` / SDK runs are skipped), and not when
   `CLAUDE_NO_IMGPANE` is set (`CLAUDE_NO_IMGPANE=1 claude` = opt out for one launch).
+- Skipped inside `screen`/`tmux` (`$STY`/`$TMUX` set, e.g. a detached `claude --remote-control`
+  session): `ITERM_SESSION_ID` is inherited from where it was started, so the split would land there.
 - Reads `session_id` and `cwd` from the hook JSON on stdin.
 - Finds the owning Claude CLI PID: `$CLAUDE_PID` if set, else walks up the parent chain to the
   first process whose `comm` contains `claude`.
@@ -183,6 +185,7 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
 - **Stills** `.png .jpg .jpeg .gif .webp .tif .tiff .bmp`: `imgcat -l -W <width>` (iTerm2's
   bundled `/Applications/iTerm.app/Contents/Resources/utilities/imgcat`). `-l` = legacy
   single-sequence mode. The multipart protocol garbles when two writers interleave.
+- **HEIC/HEIF** (iPhone photos): converted to JPEG with `sips`, cached, then imgcat.
 - **SVG**: rasterised with Quick Look (`qlmanage -t -s 1200`), padding trimmed (Quick Look pads
   to a square), cached, then imgcat.
 - **PDF**: Quick Look renders page 1 the same way; the header says "page 1 of N" (Spotlight's

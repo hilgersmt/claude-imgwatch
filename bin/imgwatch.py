@@ -26,7 +26,7 @@ QUEUE = STATE / "queue"
 CACHE = STATE / "cache"
 VENDOR = STATE / "vendor"
 BROWSER_STATE = STATE / "browser_session"
-STILL_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".tif", ".tiff", ".bmp"}
+STILL_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".tif", ".tiff", ".bmp", ".heic", ".heif"}
 # iTerm2's inline-image protocol animates GIFs, so a video is shown by
 # transcoding a capped preview to an animated GIF and drawing that.
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv", ".mpg", ".mpeg"}
@@ -461,6 +461,21 @@ def ql_png(p, px=1200):
     return str(out) if out.exists() else None
 
 
+def heic_jpg(p):
+    """iPhone HEIC/HEIF -> JPEG in the cache (sips; imgcat and Pillow can't read HEIC everywhere)."""
+    key = cache_key(p, "heic")
+    if not key:
+        return None
+    out = CACHE / (key + ".jpg")
+    if not out.exists():
+        CACHE.mkdir(parents=True, exist_ok=True)
+        tmp = CACHE / (key + ".part.jpg")
+        subprocess.run(["sips", "-s", "format", "jpeg", p, "--out", str(tmp)], capture_output=True)
+        if tmp.exists():
+            tmp.replace(out)
+    return str(out) if out.exists() else None
+
+
 def trim(png):
     """Quick Look pads thumbnails to a square; crop the padding (colour of the bottom-right pixel)."""
     try:
@@ -602,7 +617,8 @@ def contact_sheet(paths):
     except OSError:
         font = ImageFont.load_default()
     for i, p in enumerate(paths):
-        src = ql_png(p, 600) if p.lower().endswith(".svg") else p
+        lo = p.lower()
+        src = ql_png(p, 600) if lo.endswith(".svg") else heic_jpg(p) if lo.endswith((".heic", ".heif")) else p
         x, y = (i % cols) * tw, (i // cols) * (th + lab)
         try:
             im = Image.open(src); im.seek(0); im = im.convert("RGB")
@@ -1004,6 +1020,10 @@ def render(item, ts):
         src = ql_png(p)
         if src is None:
             return
+    elif ext in (".heic", ".heif"):  # iPhone photos: convert with sips
+        src = heic_jpg(p)
+        if src is None:
+            warn("sips could not convert this HEIC"); return
     elif ext in SMILES_EXTS:
         return show_grid(p)
     elif ext in PSE_EXTS:
