@@ -57,6 +57,8 @@ ap.add_argument("--shot-px", type=int, default=1400, metavar="W", help="screensh
 ap.add_argument("--html-max-mb", type=float, default=40.0, metavar="MB",
                 help="skip .html bigger than this (default 40)")
 a = ap.parse_args()
+if a.session:  # one browser pane per Claude session, not one shared by all of them
+    BROWSER_STATE = BROWSER_STATE.with_name(f"browser_session_{a.session}")
 
 tmproot = Path(f"/private/tmp/claude-{os.getuid()}")
 if a.dirs:

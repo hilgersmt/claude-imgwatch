@@ -131,7 +131,7 @@ Rendering per type (each item gets a cyan header: name, time, folder):
   given, else shot if selenium imports, else link; files over `--html-max-mb` are skipped):
   - **browser**: on first use, splits the *imgwatch* pane horizontally with the Browser
     profile (`iterm2` API, `async_split_pane(vertical=False, profile=…)`), stores its session id
-    in `~/.claude/imgwatch/browser_session` and reuses it (re-splits if it was closed). Each page
+    in `~/.claude/imgwatch/browser_session_<session id>` and reuses it (re-splits if it was closed). Each page
     goes in with `async_load_url`. Two gotchas:
     - iTerm2's browser rejects `file:///path` ("Invalid URL") but accepts `file://localhost/path`.
     - The original page is never loaded directly. A cached copy goes in
@@ -170,7 +170,7 @@ which runs imgwatch without a login shell.
 
 ### Runtime state (`~/.claude/imgwatch/`)
 `queue` (append-only, shared by all sessions; safe to truncate any time), `cache/` (GIF/PNG/HTML
-previews; safe to delete), `browser_session` (id of the reusable browser pane).
+previews; safe to delete), `browser_session_<session id>` (id of that session's reusable browser pane; `browser_session` without `--session`).
 
 ## Test checklist
 1. Start `claude` in iTerm2: a right pane titled imgwatch opens and focus stays on the left.
