@@ -4,9 +4,11 @@ Versions are git tags (`vMAJOR.MINOR.PATCH`); `imgwatch -V` and the pane banner 
 commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits past a release.
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
-## Unreleased
+## v0.0.6 — 2026-11-13
 - HEIC/HEIF stills (iPhone photos), converted to JPEG with `sips`.
 - No pane for sessions inside `screen`/`tmux` (detached `--remote-control` runs).
+- `install.sh` uses an explicit `IMGWATCH_PYTHON` when writing a new config (fixes `tests/run.sh` testing a
+  different Python than the one asked for on machines without Anaconda).
 
 ## v0.0.5 — 2026-11-13
 - **Guided setup**: `./setup.sh` walks through iTerm2, choosing a Python, optional extras (offered
