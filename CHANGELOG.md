@@ -4,6 +4,13 @@ Versions are git tags (`vMAJOR.MINOR.PATCH`); `imgwatch -V` and the pane banner 
 commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits past a release.
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
+## v0.0.7 — 2026-11-13
+- Doctor asks iTerm2 (Python API) which profiles it actually loaded. A Browser profile that exists on
+  disk but isn't loaded is now a FAIL pointing at the **iTerm2 Browser Plugin**: without the plugin
+  iTerm2 silently drops Browser profiles and splits fail with `INVALID_PROFILE_NAME`.
+- README, CLAUDE.md, `setup.sh` and the `setup-imgwatch` skill include installing the plugin.
+- Tests: the doctor's live check is stubbed (`IMGWATCH_DOCTOR_LIVE` / `IMGWATCH_DOCTOR_OFFLINE`); two new checks.
+
 ## v0.0.6 — 2026-11-13
 - HEIC/HEIF stills (iPhone photos), converted to JPEG with `sips`.
 - No pane for sessions inside `screen`/`tmux` (detached `--remote-control` runs).

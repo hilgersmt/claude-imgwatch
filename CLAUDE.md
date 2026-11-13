@@ -15,7 +15,9 @@ short version:
 3. `./install.sh -n`, show the user the plan, then `./install.sh`. It backs up the old files and
    settings.json, creates the `imgbrowser` Browser profile if missing, and ends with
    `imgwatch --doctor`; fix every FAIL and explain the warnings.
-4. One manual step: iTerm2 > Settings > General > Magic > Enable Python API (ask the user).
+4. Two manual steps (ask the user; they do them): iTerm2 > Settings > General > Magic > Enable Python API,
+   and install the iTerm2 Browser Plugin (https://iterm2.com/browser-plugin.html) then restart iTerm2. Without the plugin iTerm2
+   drops Browser profiles silently; the doctor's live profile check catches it.
 5. Run `tests/run.sh` (headless, safe: throwaway HOME) and report the result, then the README's
    in-pane checklist from a **new** Claude session (hooks load at session start).
 

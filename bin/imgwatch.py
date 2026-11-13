@@ -217,6 +217,23 @@ def prune():
 
 
 # ---------------------------------------------------------------- doctor
+def live_profile_names(timeout=5):
+    """Profile names iTerm2 has actually loaded (Python API), or None if it can't be asked."""
+    if "IMGWATCH_DOCTOR_LIVE" in os.environ:  # tests: pretend iTerm2 loaded these (comma-separated)
+        return {n for n in os.environ["IMGWATCH_DOCTOR_LIVE"].split(",") if n}
+    if os.environ.get("IMGWATCH_DOCTOR_OFFLINE"):  # tests: never talk to the real iTerm2
+        return None
+    code = ("import iterm2\n"
+            "async def m(c):\n"
+            "    for p in await iterm2.PartialProfile.async_query(c): print(p.name)\n"
+            "iterm2.run_until_complete(m)\n")
+    try:
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return set(r.stdout.splitlines()) if r.returncode == 0 and r.stdout.strip() else None
+
+
 def doctor():
     rc = 0
     def out(level, msg):
@@ -275,10 +292,19 @@ def doctor():
         hit = [p for p in profiles if p.get("Name") == prof]
         if not hit:
             out("warn", f"no iTerm2 profile '{prof}' (HTML falls back to screenshots)")
+        elif hit[0].get("Custom Command") != "Browser":
+            out("FAIL", f"profile '{prof}' exists but is not a Browser-type profile")
         else:
-            out("ok" if hit[0].get("Custom Command") == "Browser" else "FAIL",
-                f"profile '{prof}' " + ("is a Browser profile" if hit[0].get("Custom Command") == "Browser"
-                                        else "exists but is not a Browser-type profile"))
+            # A Browser profile on disk is not enough: without the iTerm2 Browser Plugin, iTerm2 silently
+            # drops every Browser-type profile and splits fail with INVALID_PROFILE_NAME. Ask iTerm2.
+            live = live_profile_names()
+            if live is None:
+                out("ok", f"profile '{prof}' is a Browser profile (iTerm2 not reachable; not checked live)")
+            elif prof in live:
+                out("ok", f"profile '{prof}' is a Browser profile, loaded by iTerm2")
+            else:
+                out("FAIL", f"profile '{prof}' is defined but iTerm2 has not loaded it: install the iTerm2 "
+                            "Browser Plugin (https://iterm2.com/browser-plugin.html), then restart iTerm2")
     # hooks and links
     sp = Path.home() / ".claude/settings.json"
     try:

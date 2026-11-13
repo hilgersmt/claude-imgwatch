@@ -198,6 +198,20 @@ else
   done
 fi
 
+# ---------------------------------------------------------------- 5b browser plugin (manual)
+title "iTerm2 Browser Plugin (one download)"
+plug_ok() { "$repo/bin/imgwatch" --doctor </dev/null 2>/dev/null | grep -q 'loaded by iTerm2'; }
+if ! has iterm2 || [ -z "$(sed -n 's/^IMGWATCH_BROWSER_PROFILE=//p' "$cfg")" ]; then meh "skipped (no browser lane)"
+elif plug_ok; then good "iTerm2 has loaded the browser profile"
+else
+  say "Web pages open in an iTerm2 browser pane, which needs iTerm2's free Browser Plugin. Without it"
+  say "iTerm2 quietly ignores browser profiles."
+  say "  1. Open ${B}https://iterm2.com/browser-plugin.html${N}, download the plugin and install it as the page says."
+  say "  2. Quit iTerm2 (⌘Q) and reopen it, then run ${B}$repo/setup.sh${N} again from the new window."
+  say "  ${D}(Still not loaded after that? Settings → Advanced → 'Enable browser-style profiles' must be Yes.)${N}"
+  pause && { plug_ok && good "browser profile loaded" || meh "not loaded yet; restart iTerm2 and re-run ./setup.sh"; }
+fi
+
 # ---------------------------------------------------------------- 6 automation (manual prompt)
 title "Allow pane splitting (one macOS prompt)"
 say "imgwatch opens its pane by asking iTerm2 to split the window (AppleScript). macOS may now show"

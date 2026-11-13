@@ -18,6 +18,7 @@ realvendor=~/.claude/imgwatch/vendor
 T=$(mktemp -d "${TMPDIR:-/tmp}/imgwatch-test.XXXXXX"); T=$(cd "$T" && pwd -P)  # FSEvents reports /private/var/...
 E=$'\e'
 export HOME=$T/home
+export IMGWATCH_DOCTOR_OFFLINE=1   # the doctor must not ask the real iTerm2 which profiles it loaded
 mkdir -p "$HOME/.claude" "$HOME/bin" "$T/watch" "$T/fix"
 echo '{}' > "$HOME/.claude/settings.json"
 [ -d "$realvendor" ] && { mkdir -p "$HOME/.claude/imgwatch"; cp -R "$realvendor" "$HOME/.claude/imgwatch/"; }
@@ -135,6 +136,10 @@ check "install.sh widens the old Read|Write matcher" "grep -q 'now runs for all 
 "$repo/bin/imgwatch" --doctor > "$T/doctor.log" 2>&1
 check "doctor: clean on a fresh install" "[ $? -eq 0 ] && ! grep -q FAIL '$T/doctor.log'"
 check "doctor: pgrep pattern matches the watcher" "grep -q 'pgrep pattern matches' '$T/doctor.log'"
+IMGWATCH_DOCTOR_LIVE=Default "$HOME/bin/imgwatch" --doctor > "$T/doctor_noplugin.log" 2>&1
+check "doctor: Browser profile defined but not loaded -> plugin FAIL" "[ $? -ne 0 ] && grep -q 'Browser Plugin' '$T/doctor_noplugin.log'"
+IMGWATCH_DOCTOR_LIVE=Default,imgbrowser "$HOME/bin/imgwatch" --doctor > "$T/doctor_live.log" 2>&1
+check "doctor: profile loaded by iTerm2 -> ok" "grep -q 'loaded by iTerm2' '$T/doctor_live.log'"
 
 # ------------------------------------------------------------------ pruning
 echo "housekeeping"

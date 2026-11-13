@@ -48,7 +48,7 @@ show which one a machine runs, e.g. `v0.0.5 (1a2b3c4)`. Update with `git pull`.
 | Component | Version | Needed for |
 |---|---|---|
 | macOS | 26.5.1, arm64 | |
-| iTerm2 | **3.7.3** | inline images (any 3.x); **Browser profiles need 3.7+** |
+| iTerm2 | **3.7.3** | inline images (any 3.x); **Browser profiles need 3.7+ and the Browser Plugin** |
 | Claude Code | 2.1.285 | `SessionStart` / `PostToolUse` hooks with `session_id`, `cwd`, `tool_input` on stdin |
 | Python | 3.13.9 (Anaconda, `/opt/anaconda3/bin/python`) | stdlib is enough for stills |
 | `iterm2` (pip) | 2.30 | HTML browser lane |
@@ -91,6 +91,11 @@ imgwatch --doctor                       # re-check any time
 Updating later = `git pull` (the symlinks pick it up; the next new Claude session uses it).
 
 ### iTerm2 setup (manual, once)
+**Install the iTerm2 Browser Plugin** (https://iterm2.com/browser-plugin.html), then restart iTerm2. It is a separate
+download; without it iTerm2 silently ignores every Browser-type profile (including `imgbrowser`) and
+imgwatch's split fails with `INVALID_PROFILE_NAME`, so HTML and structures fall back to links.
+`imgwatch --doctor` asks iTerm2 which profiles it actually loaded and flags this.
+
 **Settings → General → Magic → Enable Python API** (browser lane). The `iterm2` module then
 connects without a prompt; the first `osascript` call may trigger a macOS Automation prompt for
 "iTerm2 controlling iTerm2": allow it (pane splitting needs it).
@@ -293,7 +298,7 @@ a SMILES list, 2D and 3D SDFs, a PyMOL session and a PowerPoint deck, plus queue
 and another session; the hook is fed Bash/MCP/Grep events (paths with spaces, stale files, its own
 cache); an old `Read|Write` hook is widened by `install.sh`. Missing optional pieces (ffmpeg,
 Pillow, RDKit, PyMOL, python-pptx, network for Mol*) are reported as SKIP. Last run on the
-reference Mac: 36 passed.
+reference Mac: 36 passed (v0.0.5); boxy (macOS 27, Homebrew 3.12 venv): 41 passed (v0.0.7).
 
 ## Test checklist (in a real pane)
 1. Start `claude` in iTerm2: a right pane titled imgwatch opens and focus stays on the left.

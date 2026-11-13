@@ -62,6 +62,15 @@ If it fails, give these exact steps and wait for the user to say done, then re-c
 If it still fails after they say it's done, ask them to confirm the box is ticked; offer to skip
 (web pages then fall back to screenshots or links).
 
+## 5b. Manual: iTerm2 Browser Plugin (skip if the iterm2 module isn't installed)
+iTerm2's browser panes need a separate plugin; without it iTerm2 silently ignores Browser-type
+profiles. Check: `~/bin/imgwatch --doctor | grep profile` should say "loaded by iTerm2". If it says
+"install the iTerm2 Browser Plugin", ask the user to (it is a download they do themselves):
+1. Open https://iterm2.com/browser-plugin.html, download the plugin and install it as that page says.
+2. Quit and reopen iTerm2.
+Then re-check. If it still isn't loaded: iTerm2 > Settings > Advanced > "Enable browser-style
+profiles" must be Yes (the default).
+
 ## 6. Manual: Automation permission
 Check: `osascript -e 'tell application "iTerm2" to get name of current window'`.
 Before running it, warn: macOS may show "iTerm2 wants access to control iTerm2" — click **Allow**.
