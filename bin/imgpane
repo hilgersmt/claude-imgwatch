@@ -1,0 +1,61 @@
+#!/bin/bash
+# imgpane: split the current iTerm2 pane vertically and run imgwatch in the new (right) pane.
+# Runs imgwatch directly (no interactive shell); focus stays in the original pane and the
+# pane closes when imgwatch exits.
+# Usage: imgpane [imgwatch args...]   e.g.  imgpane -w 80%  ~/LH/figs
+# Pane width: IMGPANE_WIDTH=35 (percent of the tab, default 33) or IMGPANE_WIDTH=60c (columns).
+set -a; [ -f ~/.config/imgwatch/config ] && . ~/.config/imgwatch/config; set +a
+args=$(printf ' %q' "$@")
+here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+cmd="cd $(printf %q "$PWD") && $(printf %q "$here/imgwatch")$args"
+uuid=${ITERM_SESSION_ID#*:}
+pw=${IMGPANE_WIDTH:-33}
+osascript - "$uuid" "$cmd" "$pw" <<'APPLESCRIPT'
+on run argv
+  set theId to item 1 of argv
+  set theCmd to item 2 of argv
+  set pw to item 3 of argv
+  tell application "iTerm2"
+    set target to missing value
+    repeat with w in windows
+      repeat with t in tabs of w
+        repeat with s in sessions of t
+          if unique id of s is theId then set target to s
+        end repeat
+      end repeat
+    end repeat
+    if target is missing value then set target to current session of current window
+    set totalCols to columns of target
+    tell target
+      set newS to (split vertically with default profile command "/bin/zsh -c " & quoted form of theCmd)
+    end tell
+    -- narrow the new pane. Setting columns resizes the whole window, so restore the window's size each
+    -- time; that spreads the change proportionally, hence a few rounds to converge.
+    if pw ends with "c" then
+      set want to (text 1 thru -2 of pw) as integer
+    else
+      set want to round (totalCols * (pw as integer) / 100)
+    end if
+    if want < 20 then set want to 20
+    set w to missing value
+    repeat with ww in windows
+      repeat with t in tabs of ww
+        repeat with s in sessions of t
+          if unique id of s is unique id of newS then set w to ww
+        end repeat
+      end repeat
+    end repeat
+    if w is not missing value then
+      set b to bounds of w
+      repeat 5 times
+        if (columns of newS) is less than or equal to want + 1 then exit repeat
+        set columns of newS to want
+        delay 0.1
+        set bounds of w to b
+        delay 0.1
+      end repeat
+    end if
+    tell target to select
+  end tell
+end run
+APPLESCRIPT

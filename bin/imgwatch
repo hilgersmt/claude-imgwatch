@@ -1,0 +1,8 @@
+#!/bin/bash
+# Launcher: run imgwatch.py with the interpreter from ~/.config/imgwatch/config (IMGWATCH_PYTHON).
+# The interpreter needs the `iterm2` module for the browser lane and `selenium` for the shot lane;
+# everything else is stdlib. exec, so the process command line is "<python> <path>/imgwatch.py ...",
+# which is what imgpane-autostart.sh's pgrep pattern matches.
+here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+set -a; [ -f ~/.config/imgwatch/config ] && . ~/.config/imgwatch/config; set +a
+exec "${IMGWATCH_PYTHON:-python3}" "$here/imgwatch.py" "$@"

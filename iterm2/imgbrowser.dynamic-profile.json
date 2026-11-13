@@ -1,0 +1,11 @@
+{
+  "Profiles": [
+    {
+      "Name": "imgbrowser",
+      "Guid": "6f0c1f3e-imgwatch-imgbrowser-profile",
+      "Custom Command": "Browser",
+      "Close Sessions On End": true,
+      "Prompt Before Closing 2": false
+    }
+  ]
+}
