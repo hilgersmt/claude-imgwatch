@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install or update claude-imgwatch: symlink scripts into ~/bin and ~/.claude/hooks, write
-# ~/.config/imgwatch/config if missing, and merge the two hooks into ~/.claude/settings.json.
+# ~/.config/imgwatch/config if missing, and merge the three hooks into ~/.claude/settings.json.
 # Re-running is safe. Existing non-symlink files are backed up first. -n = dry run.
 set -euo pipefail
 repo=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
@@ -43,6 +43,7 @@ link bin/imgpane       ~/bin/imgpane
 link bin/imgwatch-plugin ~/bin/imgwatch-plugin
 link hooks/imgpane-autostart.sh ~/.claude/hooks/imgpane-autostart.sh
 link hooks/imgwatch-enqueue.sh  ~/.claude/hooks/imgwatch-enqueue.sh
+link hooks/imgwatch-annotations.sh ~/.claude/hooks/imgwatch-annotations.sh
 
 say "settings.json hooks"
 s=~/.claude/settings.json
@@ -55,7 +56,8 @@ d = json.load(open(p)) if os.path.exists(p) else {}
 # the enqueue hook runs on every tool (it reads paths out of Bash/MCP output); older installs had
 # matcher "Read|Write", which is widened here
 want = {"PostToolUse": (None, "~/.claude/hooks/imgwatch-enqueue.sh", 5),
-        "SessionStart": (None, "~/.claude/hooks/imgpane-autostart.sh", 10)}
+        "SessionStart": (None, "~/.claude/hooks/imgpane-autostart.sh", 10),
+        "UserPromptSubmit": (None, "~/.claude/hooks/imgwatch-annotations.sh", 5)}
 for ev, (matcher, cmd, to) in want.items():
     groups = d.setdefault("hooks", {}).setdefault(ev, [])
     mine = [g for g in groups if any(h.get("command") == cmd for h in g.get("hooks", []))]

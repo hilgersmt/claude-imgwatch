@@ -5,6 +5,21 @@ commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits 
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
 ## Unreleased
+- **Mark up** an item (key `a` in the pane, `imgwatch --annotate [PATH]` from Claude): a localhost page
+  where you click points / drag boxes and add notes; Send burns them into a copy and a new
+  **UserPromptSubmit hook** (`imgwatch-annotations.sh`) hands Claude the marked-up copy, pixel
+  coordinates and notes with your next message (once). Pages are marked up from a screenshot.
+- **Inline images from tool results**: Chrome screenshots and MCP tools that return an image instead of
+  a file are saved to `~/.claude/imgwatch/inline/` and shown.
+- **Replace in place**: an item shown again right after itself replaces its entry (`↻N`) instead of
+  stacking (`--no-replace` to turn off). **Pin** (key `p`, `imgwatch --pin PATH` / `--unpin`): pinned
+  item on top, newest under it, both sized to fit the pane.
+- Keys in the pane: `p` pin/unpin, `a` mark up, `r` redraw, `?` help.
+- New formats: **Markdown** (written/edited by Claude, never under `~/.claude`; marked.js, Obsidian
+  links/embeds/callouts, mermaid), **Jupyter notebooks** (saved outputs, static), **sequences and
+  alignments** (FASTA/A3M/Clustal/Stockholm; colours, conservation, identity, 60-residue blocks).
+- Redraws (resize, replace, pin) reload only the newest page into the browser pane, not every page.
+- Tests: 22 new checks (63 total).
 - **Served pages**: `IMGWATCH_URLMAP="PATH=URL;…"` (config) maps an HTML file or folder to the local server
   that serves it, so dashboards that `fetch("/api/…")` show live instead of as an empty `file://` page
   (browser, shot and link lanes). Unmapped pages that fetch from their server get a hint. Three new tests.

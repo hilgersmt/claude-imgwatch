@@ -47,7 +47,7 @@ offer `pip install 'protobuf<7'`.
 
 ## 4. Install
 `./install.sh -n`, show the user the plan in a few lines, ask, then `./install.sh`. It links the
-scripts, merges two hooks into `~/.claude/settings.json` (backup first), creates the `imgbrowser`
+scripts, merges three hooks into `~/.claude/settings.json` (backup first), creates the `imgbrowser`
 Browser profile if missing, and runs the doctor.
 
 ## 5. Manual: iTerm2 Python API (skip if the iterm2 module isn't installed)

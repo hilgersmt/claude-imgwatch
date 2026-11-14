@@ -162,7 +162,7 @@ fi
 
 # ---------------------------------------------------------------- 4 install
 title "Install the scripts and Claude Code hooks"
-say "This links imgwatch into ~/bin, adds two hooks to ~/.claude/settings.json (your other settings"
+say "This links imgwatch into ~/bin, adds three hooks to ~/.claude/settings.json (your other settings"
 say "are kept; a backup is made first) and creates an iTerm2 browser profile called 'imgbrowser'."
 mkdir -p "$(dirname "$cfg")"
 if [ -f "$cfg" ]; then sed -i '' "s|^IMGWATCH_PYTHON=.*|IMGWATCH_PYTHON=$py|" "$cfg"

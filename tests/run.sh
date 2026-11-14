@@ -51,6 +51,20 @@ fig("chart.svg", "svg")
 with PdfPages(f"{d}/doc.pdf") as pdf:
     for k in range(3):
         f, ax = plt.subplots(); ax.set_title(f"page {k+1}"); pdf.savefig(f); plt.close(f)
+open(f"{d}/notes.md", "w").write("---\ntags: [t]\n---\n# Title\n\nSee [[other note|the other]] and ![[single.png]].\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
+import base64, io, json
+b = io.BytesIO(); f, ax = plt.subplots(figsize=(2, 2), dpi=40); ax.plot([1, 2]); f.savefig(b, format="png"); plt.close(f)
+json.dump({"nbformat": 4, "nbformat_minor": 5, "metadata": {"kernelspec": {"display_name": "Python 3"}}, "cells": [
+    {"cell_type": "markdown", "metadata": {}, "source": ["# NB title"]},
+    {"cell_type": "code", "execution_count": 1, "metadata": {}, "source": ["x"], "outputs": [
+        {"output_type": "execute_result", "execution_count": 1, "metadata": {}, "data": {"text/plain": ["array([0, 1])"]}},
+        {"output_type": "display_data", "metadata": {}, "data": {"image/png": base64.b64encode(b.getvalue()).decode()}},
+        {"output_type": "error", "ename": "E", "evalue": "v", "traceback": ["\u001b[31mBoomError\u001b[0m: boom"]}]}]},
+    open(f"{d}/nb.ipynb", "w"))
+open(f"{d}/kin.fasta", "w").write(">BTK\nGSWEIDPKDLTFLKELG\n>ITK\nGSWVIDPSELTFVQEIG\n>TEC\nGSWLIEPSELVFIKELG\n")
+open(f"{d}/hits.a3m", "w").write(">q\nMKTAYIAKQR\n>h1\nMKTaaAYIAK-R\n>h2\nMK-AYIgAKQR\n")
+open(f"{d}/pair.aln", "w").write("CLUSTAL W (1.83)\n\nseqA   MKTAYIAKQR\nseqB   MKSAYIAKQR\n       **:*******\n")
+open(f"{d}/one.fa", "w").write(">long single\n" + "ACDEFGHIKLMNPQRSTVWY" * 7 + "\n")
 open(f"{d}/page.html", "w").write("<!doctype html><html><head></head><body><p>hello</p></body></html>")
 open(f"{d}/dash.html", "w").write("<!doctype html><body><p id=n></p><script>fetch('/api/now').then(r => r.json())</script></body>")
 # a tiny but valid PDB (3 residues of crambin)
@@ -121,8 +135,18 @@ rm -f "$q"
 "$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":sys.argv[1]+"/stale.png "+sys.argv[2]}}))' "$T" "$HOME/.claude/imgwatch/cache/own.png" | hook
 "$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Grep","tool_input":{},"tool_response":{"filenames":[sys.argv[1]+"/pymol.png"]}}))' "$T" | hook
 check "hook: ignores stale files, its own cache, Grep output" "[ ! -s '$q' ]"
-rm -f "$q"; enq /a/x.png; enq /a/y.bcif; enq /a/z.pdf; enq /a/w.mp4; enq /a/v.HEIC; enq /a/notes.txt; enq /a/data.csv
-check "enqueue hook: media in, text out" "[ \"\$(cut -f2 '$q' | tr '\n' ' ')\" = '/a/x.png /a/y.bcif /a/z.pdf /a/w.mp4 /a/v.HEIC ' ]"
+rm -f "$q"
+"$py" -c 'import json,base64; d=base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode(); print(json.dumps({"session_id":"S","tool_name":"mcp__claude-in-chrome__computer","tool_input":{"action":"screenshot"},"tool_response":[{"type":"text","text":"ok"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":d}},{"type":"image","mimeType":"image/png","data":d}]}))' | hook
+check "hook: inline images in a tool result saved and queued (both block shapes)" "[ \$(grep -c '/.claude/imgwatch/inline/chrome-computer_' '$q') -eq 2 ] && ls '$HOME/.claude/imgwatch/inline/'*.jpg '$HOME/.claude/imgwatch/inline/'*.png >/dev/null"
+rm -f "$q"
+"$py" -c 'import json,base64; d=base64.b64encode(b"x").decode(); print(json.dumps({"session_id":"S","tool_name":"Read","tool_input":{"file_path":"/a/notes.txt"},"tool_response":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":d}}]}))' | hook
+check "hook: Read results are not re-captured as inline images" "[ ! -s '$q' ]"
+printf '{"session_id":"S","tool_name":"Write","tool_input":{"file_path":"/a/n.md"}}' | hook
+printf '{"session_id":"S","tool_name":"Read","tool_input":{"file_path":"/a/r.md"}}' | hook
+printf '{"session_id":"S","tool_name":"Write","tool_input":{"file_path":"%s/.claude/memory/m.md"}}' "$HOME" | hook
+check "hook: Markdown only on Write/Edit, never under ~/.claude" "[ \"\$(cut -f2 '$q' | tr '\n' ' ')\" = '/a/n.md ' ]"
+rm -f "$q"; enq /a/x.png; enq /a/y.bcif; enq /a/z.pdf; enq /a/w.mp4; enq /a/v.HEIC; enq /a/notes.txt; enq /a/data.csv; enq /a/nb.ipynb; enq /a/aln.a3m
+check "enqueue hook: media in, text out" "[ \"\$(cut -f2 '$q' | tr '\n' ' ')\" = '/a/x.png /a/y.bcif /a/z.pdf /a/w.mp4 /a/v.HEIC /a/nb.ipynb /a/aln.a3m ' ]"
 check "enqueue hook: line format session<TAB>path" "head -1 '$q' | grep -q \$'^S\t/a/x.png\$'"
 rm -f "$q"
 
@@ -131,7 +155,7 @@ echo "install"
 "$repo/install.sh" > "$T/install1.log" 2>&1
 check "install.sh exits 0" "[ $? -eq 0 ]"
 check "links point into the repo" "[ \"\$(readlink -f '$HOME/bin/imgwatch')\" = '$repo/bin/imgwatch' ] && [ \"\$(readlink -f '$HOME/.claude/hooks/imgwatch-enqueue.sh')\" = '$repo/hooks/imgwatch-enqueue.sh' ]"
-check "settings.json has both hooks" "grep -q imgwatch-enqueue.sh '$HOME/.claude/settings.json' && grep -q imgpane-autostart.sh '$HOME/.claude/settings.json'"
+check "settings.json has all three hooks" "grep -q imgwatch-enqueue.sh '$HOME/.claude/settings.json' && grep -q imgpane-autostart.sh '$HOME/.claude/settings.json' && grep -q imgwatch-annotations.sh '$HOME/.claude/settings.json'"
 check "browser profile created" "grep -q '\"Custom Command\": \"Browser\"' '$HOME/Library/Application Support/iTerm2/DynamicProfiles/imgwatch.json'"
 "$repo/install.sh" > "$T/install2.log" 2>&1
 check "install.sh is idempotent" "! grep -qE '^  (link|add|new|bak) ' '$T/install2.log'"
@@ -168,15 +192,16 @@ rm -f "$c"/new*.png; : > "$q"
 # ------------------------------------------------------------------ rendering
 echo "rendering (headless watcher, link mode)"
 cd "$T/watch"
+sleep 600 & OWN=$!   # stands in for the Claude CLI (--owner): the control channel is keyed on it
 IMGWATCH_URLMAP="$T/watch/served.html=http://127.0.0.1:9/dash/;$T/watch/site=http://127.0.0.1:9/" \
-TERM_PROGRAM=iTerm.app COLUMNS=100 "$repo/bin/imgwatch" --session S1 --html-mode link "$T/watch" > "$T/watch.log" 2>&1 & W=$!
+IMGWATCH_NO_OPEN=1 TERM_PROGRAM=iTerm.app COLUMNS=100 "$repo/bin/imgwatch" --session S1 --owner $OWN --html-mode link "$T/watch" > "$T/watch.log" 2>&1 & W=$!
 check "watcher starts with a banner" "waitfor '+ hook queue' 5"
 cp "$T/fix/single.png" "$T/watch/"
 check "PNG: header with clickable name" "waitfor '${E}]8;;file://localhost$T/watch/single.png' 8"
 cp "$T/fix"/burst_*.png "$T/watch/"
 if "$py" -c 'import PIL' 2>/dev/null; then
   # FSEvents occasionally delivers a burst in two groups (e.g. 6 + 2), so only require that a sheet is made
-  check "burst of 8 stills: contact sheet" "waitfor ' images' 10 && log | grep -qE '[0-9]+ images' && ls '$c'/sheet_*.png >/dev/null 2>&1"
+  check "burst of 8 stills: contact sheet" "waitfor ' images' 10 && log | grep -qE '[0-9]+ images' && for i in \$(seq 20); do ls '$c'/sheet_*.png >/dev/null 2>&1 && break; sleep 0.3; done; ls '$c'/sheet_*.png >/dev/null 2>&1"
 else skp "burst (no Pillow)"; fi
 cp "$T/fix/chart.svg" "$T/watch/"
 check "SVG: rasterised by Quick Look" "waitfor 'chart.svg' 8 && sleep 1.5 && [ \$(ls '$c'/*.png 2>/dev/null | grep -vc sheet_) -ge 1 ]"
@@ -221,12 +246,50 @@ if [ -f "$T/fix/deck.pptx" ]; then
   cp "$T/fix/deck.pptx" "$T/watch/"
   check "PowerPoint: first slide via Quick Look" "waitfor 'first slide/page' 10"
 else skp "Office (no python-pptx to make a fixture)"; fi
+sq() { printf 'S1\t%s\n' "$1" >> "$q"; }
+cp "$T/fix/notes.md" "$T/watch/"; sleep 2.5
+check "Markdown in a watched folder is ignored (hook only)" "! log | grep -qF 'markdown → page'"
+sq "$T/fix/notes.md"
+if waitfor 'markdown → page' 8 && waitfor 'notes.md' 20 && sleep 1 && ls "$c"/md2_*notes.md.html >/dev/null 2>&1; then
+  pg=$(ls "$c"/md2_*notes.md.html | head -1)
+  check "Markdown: page with marked.js, wikilinks/embeds/frontmatter converted" "grep -q 'marked' '$pg' && grep -q 'the other' '$pg' && grep -q '(&lt;single.png&gt;)' '$pg' && grep -q 'class=\"fm\"' '$pg' && grep -q '<base href=\"file://localhost$T/fix/\">' '$pg'"
+else log | grep -q 'cannot fetch marked' && skp "Markdown (marked.js not cached and no network)" || bad "Markdown: no page"; fi
+sq "$T/fix/nb.ipynb"
+if waitfor 'notebook → page' 8 && sleep 1 && ls "$c"/nb1_*nb.ipynb.html >/dev/null 2>&1; then
+  pg=$(ls "$c"/nb1_*nb.ipynb.html | head -1)
+  check "notebook: code, text/plain, PNG output and ANSI-free traceback" "grep -q 'array(\[0, 1\])' '$pg' && grep -q 'data:image/png;base64' '$pg' && grep -q 'BoomError' '$pg' && ! grep -q \$'\x1b' '$pg'"
+else log | grep -q 'cannot fetch marked' && skp "notebook (marked.js not cached and no network)" || bad "notebook: no page"; fi
+sq "$T/fix/kin.fasta"
+check "alignment (FASTA): columns, identity, conservation row" "waitfor '3 sequences × 17 columns' 8 && sleep 1 && grep -q conservation \$(ls '$c'/aln3_*kin.fasta.html | head -1)"
+sq "$T/fix/hits.a3m"
+check "alignment (A3M): lowercase insertions dropped" "waitfor '3 sequences × 10 columns' 8"
+sq "$T/fix/pair.aln"
+check "alignment (Clustal): parsed, consensus line skipped" "waitfor '2 sequences × 10 columns, 90% mean identity' 8"
+sq "$T/fix/one.fa"
+check "single sequence: wrapped in numbered 60-residue lines" "waitfor '1 sequence, longest 140' 8 && sleep 1 && grep -q '>121 ' \$(ls '$c'/aln3_*one.fa.html | head -1)"
+cp "$T/fix/single.png" "$T/fix/again.png"; sq "$T/fix/again.png"; sleep 3; sq "$T/fix/again.png"
+check "same file twice in a row: replaced in place (↻2)" "waitfor '↻2 ' 8"
+printf 'pin\t%s\n' "$T/fix/single.png" >> "$HOME/.claude/imgwatch/control_$OWN"
+check "control channel: pin shows the pinned item" "waitfor '📌' 8 && waitfor 'pinned (p or' 2"
+printf 'unpin\t\n' >> "$HOME/.claude/imgwatch/control_$OWN"; sleep 1.5
+printf 'annotate\t%s\n' "$T/fix/single.png" >> "$HOME/.claude/imgwatch/control_$OWN"
+if waitfor 'mark up single.png' 8; then
+  url=$(log | grep -ao 'http://127.0.0.1:[0-9]*/[A-Za-z0-9_-]*/a/[0-9]*' | tail -1)
+  check "mark-up page served on localhost" "curl -sf '$url' | grep -q 'Send to Claude'"
+  imgurl=${url/\/a\//\/img\/}; badurl=${url%/a/*}x/a/1
+  check "mark-up image served; wrong token refused" "curl -sf '$imgurl' | head -c 8 | LC_ALL=C grep -aq PNG && ! curl -sf '$badurl' >/dev/null"
+  curl -sf -X POST -H 'Content-Type: application/json' --data '{"marks":[{"kind":"box","x":10,"y":12,"w":40,"h":30,"note":"label overlaps"},{"kind":"point","x":100,"y":80,"note":""}],"note":"bigger font"}' "$url" > "$T/post.json"
+  check "marks saved: marked-up PNG + record, shown in the pane" "grep -q '\"ok\": *true' '$T/post.json' && waitfor '2 marks saved' 8 && ls '$HOME/.claude/imgwatch/annotations/'*_marked.png >/dev/null && [ -s '$HOME/.claude/imgwatch/annotations/S1.jsonl' ]"
+  printf '{"session_id":"S1","prompt":"fix it"}' | "$repo/hooks/imgwatch-annotations.sh" > "$T/ctx1.txt"
+  printf '{"session_id":"S1","prompt":"again"}' | "$repo/hooks/imgwatch-annotations.sh" > "$T/ctx2.txt"
+  check "prompt hook: marks reach Claude once (box, point, notes, marked copy)" "grep -q 'box x 10-50, y 12-42: label overlaps' '$T/ctx1.txt' && grep -q 'point (100, 80): (no note)' '$T/ctx1.txt' && grep -q 'Overall note: bigger font' '$T/ctx1.txt' && grep -q '_marked.png' '$T/ctx1.txt' && [ ! -s '$T/ctx2.txt' ]"
+else bad "mark-up: page not opened"; fi
 printf 'S1\t%s\n' "$T/fix/single.png" >> "$q"; printf 'OTHER\t%s\n' "$T/fix/burst_0.png" >> "$q"
 sleep 3
 check "queue: own session's file shown again" "[ \$(log | grep -c 'single.png') -ge 2 ]"
 check "queue: other session's file ignored" "! log | grep -qF '$T/fix/burst_0.png'"
 check "no Python traceback in the log" "! log | grep -q Traceback"
-kill $W 2>/dev/null; W=
+kill $W $OWN 2>/dev/null; W=
 
 printf '\n%d passed, %d failed, %d skipped\n' $pass $fail $skip
 [ $fail -eq 0 ]

@@ -1,5 +1,5 @@
 # ~/.config/imgwatch/config  (sourced by bash; install.sh writes it on first install)
-# Interpreter for imgwatch and both hooks. Needs: stdlib; `iterm2` for the browser lane;
+# Interpreter for imgwatch and its hooks. Needs: stdlib; `iterm2` for the browser lane;
 # `selenium` + Chrome for the headless-screenshot lane.
 IMGWATCH_PYTHON=/opt/anaconda3/bin/python
 # iTerm2 Browser-type profile used for HTML. "" = no browser pane (falls back to shot, then link).

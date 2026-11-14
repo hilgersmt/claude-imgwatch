@@ -14,8 +14,24 @@ split pane that shows the files that session produces or opens, as they appear:
 | SMILES list (`.smi`), 2D or multi-molecule SDF/MOL | RDKit grid, dark style (white carbons), names as legends |
 | PyMOL session (`.pse`) | ray-traced snapshot of the saved view (headless PyMOL) |
 | PowerPoint, Word, Excel, Keynote, Pages, Numbers | first slide/page (Quick Look) |
+| Markdown (`.md`, written or edited by Claude) | rendered page: tables, code, Obsidian `[[links]]`/`![[embeds]]`/callouts, mermaid |
+| Jupyter notebook (`.ipynb`) | static page: markdown, code, saved outputs (plots, tables, tracebacks); not re-run |
+| Sequences / alignments (FASTA, A3M, Clustal, Stockholm) | coloured alignment in 60-residue blocks, conservation track, % identity |
+| images returned inside a tool result (Chrome screenshots, MCP tools) | saved and shown like any still |
 
-Every header's file name and folder are clickable (cmd-click opens them).
+Every header's file name and folder are clickable (cmd-click opens them). An item shown again right
+after itself (a figure being re-rendered, Write then Read) **replaces** its entry (`↻2`, `↻3`, …)
+instead of stacking.
+
+**Pin** (key `p` in the pane, or `imgwatch --pin PATH` from Claude): keeps an item at the top while the
+newest item shows under it, both shrunk to fit, for "make it look like this". `p` again or
+`imgwatch --unpin` releases it.
+
+**Mark up** (key `a` in the pane, or `imgwatch --annotate [PATH]` from Claude): opens the latest item
+(or PATH) in a page where you click for a point or drag for a box, type a note per mark, and press
+**Send**. The marks go to Claude **with your next message**: a marked-up copy plus pixel coordinates
+and your notes, so "this label" needs no describing. Pages (HTML, Mol*, notebooks) are marked up from
+a screenshot.
 
 Files show up when Claude reads or writes them, when they appear in the session's scratch dir or
 working dir, **or when a Bash command or MCP tool mentions a media file it just wrote** (a script
@@ -49,7 +65,7 @@ show which one a machine runs, e.g. `v0.0.5 (1a2b3c4)`. Update with `git pull`.
 |---|---|---|
 | macOS | 26.5.1, arm64 | |
 | iTerm2 | **3.7.3** | inline images (any 3.x); **Browser profiles need 3.7+ and the Browser Plugin** |
-| Claude Code | 2.1.285 | `SessionStart` / `PostToolUse` hooks with `session_id`, `cwd`, `tool_input` on stdin |
+| Claude Code | 2.1.285 | `SessionStart` / `PostToolUse` / `UserPromptSubmit` hooks with `session_id`, `cwd`, `tool_input` on stdin |
 | Python | 3.13.9 (Anaconda, `/opt/anaconda3/bin/python`) | stdlib is enough for stills |
 | `iterm2` (pip) | 2.30 | HTML browser lane |
 | `selenium` (pip) | 4.52.0 + Google Chrome 157 | HTML screenshot lane |
@@ -117,7 +133,8 @@ headless screenshots (or a clickable link without selenium).
 ```
 claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 width)
  │ SessionStart hook ── imgpane-autostart.sh ──► imgpane (AppleScript split) ──► imgwatch --owner PID --session SID
- │ PostToolUse(Read|Write) ── imgwatch-enqueue.sh ──► ~/.claude/imgwatch/queue ──► (tailed, filtered by SID)
+ │ PostToolUse (all tools) ── imgwatch-enqueue.sh ──► ~/.claude/imgwatch/queue ──► (tailed, filtered by SID)
+ │ UserPromptSubmit ── imgwatch-annotations.sh ◄── annotations/<SID>.jsonl ◄──── mark-up page (localhost)
  │ figures written to scratch dir / cwd  ───────────────────────────────────────► (polled every 1 s)
  └ exits ───────────────────────────────────────────────────────────────────────► watcher sees owner gone, exits, pane closes
                                                      HTML ──► iTerm2 browser pane (below, via Python API)
@@ -153,7 +170,13 @@ claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 wi
 
 ### 3. `hooks/imgwatch-enqueue.sh` (PostToolUse, all tools)
 - Read/Write/Edit: if `tool_input.file_path` has a media extension, appends
-  `session_id<TAB>path` to `~/.claude/imgwatch/queue` (always, even for old files).
+  `session_id<TAB>path` to `~/.claude/imgwatch/queue` (always, even for old files). Markdown is the
+  exception: only on Write/Edit (Claude reads notes constantly) and never under `~/.claude` (memory,
+  plans), and it is never picked out of Bash output or the watched folders.
+- Any tool but Read: images returned *inside* the result (`{"type":"image","source":{…base64…}}` or
+  MCP's `{"type":"image","mimeType","data"}`, e.g. Claude-in-Chrome screenshots) are decoded to
+  `~/.claude/imgwatch/inline/<tool>_<HHMMSS>_<hash>.<ext>` and queued (max 10 per call). Read is
+  skipped because its image result is the file it already queued.
 - Bash and `mcp__*` tools: scans the tool input and response text for media extensions; each hit
   is grown leftwards to the longest string that is an existing file, so paths with spaces work
   (OneDrive). Queued only if modified in the last 3 minutes and not under `~/.claude/imgwatch`.
@@ -164,7 +187,13 @@ claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 wi
 - Note that when Claude `Read`s an image it also costs context (vision); writing figures into a
   polled dir shows them for free.
 
-### 4. `bin/imgwatch` → `bin/imgwatch.py`
+### 4. `hooks/imgwatch-annotations.sh` (UserPromptSubmit)
+- If `~/.claude/imgwatch/annotations/<session id>.jsonl` exists, moves it aside (so each record is
+  delivered once) and prints a summary that Claude Code adds to the prompt as context: the image path,
+  the marked-up copy, each mark (box corners or point, in image pixels) with its note, and the overall
+  note. Nothing pending → prints nothing. `python -S`, always exits 0.
+
+### 5. `bin/imgwatch` → `bin/imgwatch.py`
 `bin/imgwatch` is a 3-line launcher: sources the config (with `set -a`, so the values are exported)
 and `exec`s `$IMGWATCH_PYTHON imgwatch.py`. The watcher loop, every `--interval` (1 s):
 - **Queue**: reads new bytes since the last offset (resets if the file shrank), skips lines
@@ -187,6 +216,21 @@ and `exec`s `$IMGWATCH_PYTHON imgwatch.py`. The watcher loop, every `--interval`
   oldest until the cache is under `--cache-mb` (500); the queue is cut to its last 64 kB once it
   passes 1 MB (other watchers notice it shrank and continue from the new end); stale
   `browser_session_*` files (> 1 day) are removed.
+- **Keys** (when the pane is a real foreground tty): `p` pin/unpin the latest item, `a` mark up the
+  latest item, `r` redraw, `?` help. cbreak mode, restored on exit.
+- **Control channel**: `imgwatch --pin PATH`, `--unpin`, `--annotate [PATH]` run from a Bash call
+  inside a Claude session find that session's Claude process (parent chain), check a watcher with
+  `--owner <pid>` runs, and append the command to `~/.claude/imgwatch/control_<pid>`, which the
+  watcher consumes each loop.
+- **Mark-up server**: on first use, a `ThreadingHTTPServer` on `127.0.0.1:<random port>` (daemon
+  thread; `server_bind` overridden because the stock one reverse-resolves the host, which can hang).
+  Every URL carries a random per-watcher token, so other local pages can't read or post. GET serves the
+  page and the image, POST takes `{marks, note}`, burns the marks into a copy with Pillow
+  (`annotations/<sid8>_<time>_marked.png`), appends a record to `annotations/<sid>.jsonl`, and the
+  pane shows the marked-up copy. Browser pane if there is one, else the default browser.
+- **Replace / pin**: an item equal to the last one shown replaces it (terminal items redraw, pages just
+  reload the browser pane; `--no-replace` turns this off). While pinned, every new item redraws the pane
+  as pin + newest with image height capped at half the pane (`imgcat -H`).
 - **Resize**: SIGWINCH sets a flag; after 0.4 s with no further resize it clears screen *and*
   scrollback (`ESC]1337;ClearScrollback`, because iTerm2 keeps stale, mis-sized images there) and
   redraws the last `--keep` (4) items, since inline images are sized at draw time.
@@ -242,6 +286,19 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
 - **Office / iWork** `.pptx .ppt .docx .doc .xlsx .xls .key .pages .numbers`: Quick Look's
   first-slide/page thumbnail (macOS renders these natively, no Office needed). Not trimmed (only
   SVG thumbnails are, so page margins stay intact).
+- **Markdown** `.md .markdown`: a cached page with the text embedded and rendered client-side by
+  marked.js (vendored once from jsDelivr, pinned 12.0.2); frontmatter shown as a small block,
+  `![[file]]` → image, `[[note|alias]]` → italic text, `> [!note]` → styled callout, ```` ```mermaid ````
+  blocks drawn by mermaid 10.9.1 (vendored only when a note uses it). `<base>` points at the note's
+  folder, so relative images resolve.
+- **Notebooks** `.ipynb` (nbformat 3/4): markdown cells (incl. attachments), code with execution
+  counts, and saved outputs: PNG/JPEG/SVG, HTML (pandas tables), markdown, text, stderr in amber,
+  tracebacks with ANSI colour stripped. Nothing is executed.
+- **Sequences** `.fasta .fa .faa .fas .a3m .aln .clustal .sto .stk`: FASTA, A3M (lowercase insertion
+  columns dropped), Clustal (consensus lines skipped) and Stockholm. Equal lengths = an alignment:
+  Clustal-X-like residue colours (nucleotide colours for DNA/RNA), residues that differ from the column
+  consensus dimmed, a conservation track, mean identity to the first sequence. Otherwise each sequence
+  is listed. 60 residues per line with position numbers; at most `--max-seqs` (300) rows.
 - **Structures** `.pdb .ent .cif .mmcif .bcif .mol2` and single 3D `.sdf/.mol`: a self-contained Mol* page
   (`cache/<hash>_<name>.html`: Mol* JS/CSS inlined, the structure embedded as text or, for
   BinaryCIF, base64 → `Uint8Array`, loaded with `viewer.loadStructureFromData`) goes through the
@@ -271,7 +328,10 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
 | `--max-mols N` | 48 | molecules per compound grid |
 | `--poll` | off | poll even if watchdog is installed |
 | `--burst N` | 6 | more than N stills together → contact sheet (0 = never) |
-| `--cache-days` / `--cache-mb` | 7 / 500 | cache pruning at start |
+| `--cache-days` / `--cache-mb` | 7 / 500 | cache pruning at start (also `inline/`, `annotations/`) |
+| `--no-replace` | off | always append, never replace the last item in place |
+| `--max-seqs N` | 300 | alignment rows drawn |
+| `--pin PATH` / `--unpin` / `--annotate [PATH]` | | from inside a Claude session: control that session's pane |
 | `-V/--version` | | print commit + date (also in the banner) |
 | `--doctor` | | check the installation (below) |
 
@@ -279,7 +339,7 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
 Checks, each reported ok / warn / FAIL (exit 1 on any FAIL): config and interpreter; iTerm2
 version (3.7+ for browser panes) and imgcat; Python modules (`iterm2`, `selenium`, `watchdog`,
 Pillow); ffmpeg; Chrome; Mol* cache; iTerm2 Python API enabled; the browser profile exists and
-is Browser-type; both hooks are in `settings.json`, executable, and are this repo's copies;
+is Browser-type; all three hooks are in `settings.json`, executable, and are this repo's copies;
 `~/bin` links point here; the enqueue hook's extension list matches what imgwatch handles; and
 it starts a throwaway watcher to prove the autostart hook's `pgrep` pattern matches it.
 
@@ -290,7 +350,10 @@ which runs imgwatch without a login shell.
 
 ### Runtime state (`~/.claude/imgwatch/`)
 `queue` (append-only, shared by all sessions; safe to truncate any time), `cache/` (GIF/PNG/HTML
-previews, Mol* pages, contact sheets; pruned at start; safe to delete), `vendor/` (Mol*), `browser_session_<session id>` (id of that session's reusable browser pane; `browser_session` without `--session`).
+previews, Mol* / note / notebook / alignment pages, contact sheets; pruned at start; safe to delete),
+`vendor/` (Mol*, marked, mermaid), `inline/` (images pulled out of tool results), `annotations/`
+(marked-up copies, pending `<sid>.jsonl`, delivered `<sid>.sent-*.jsonl`), `control_<pid>` (pin/annotate
+commands in flight), `browser_session_<session id>` (id of that session's reusable browser pane; `browser_session` without `--session`).
 
 ### Other terminals (experimental, untested)
 The pane opener and image drawing have branches for **WezTerm** (iTerm2 image protocol written
@@ -307,11 +370,13 @@ touched: syntax; the enqueue hook's filter and line format; `install.sh` on an e
 (links, settings merge, browser profile, idempotent second run, clean doctor including the pgrep
 check); cache/queue pruning; and a headless watcher in link mode fed a PNG, a burst of 8 (contact
 sheet), SVG, a 3-page PDF, HTML, a PDB (Mol* page with the data embedded), an mp4 (GIF preview),
-a SMILES list, 2D and 3D SDFs, a PyMOL session and a PowerPoint deck, plus queue lines for its own
-and another session; the hook is fed Bash/MCP/Grep events (paths with spaces, stale files, its own
+a SMILES list, 2D and 3D SDFs, a PyMOL session and a PowerPoint deck, a Markdown note, a notebook,
+FASTA/A3M/Clustal alignments and a single long sequence, a file shown twice (replaced in place), pin and
+mark-up through the control channel (page, image, wrong token, POST → marked PNG + record → prompt hook
+output, delivered once), plus queue lines for its own and another session; inline images in tool results; the hook is fed Bash/MCP/Grep events (paths with spaces, stale files, its own
 cache); an old `Read|Write` hook is widened by `install.sh`. Missing optional pieces (ffmpeg,
 Pillow, RDKit, PyMOL, python-pptx, network for Mol*) are reported as SKIP. Last run on the
-reference Mac: 36 passed (v0.0.5); boxy (macOS 27, Homebrew 3.12 venv): 41 passed (v0.0.7).
+reference Mac: 36 passed (v0.0.5); boxy (macOS 27, Homebrew 3.12 venv): 63 passed (unreleased, 2026-11-14).
 
 ## Test checklist (in a real pane)
 1. Start `claude` in iTerm2: a right pane titled imgwatch opens and focus stays on the left.
@@ -326,7 +391,13 @@ reference Mac: 36 passed (v0.0.5); boxy (macOS 27, Homebrew 3.12 venv): 41 passe
 6. Drag the divider: the pane clears and redraws the last 4 items at the new width.
 7. `/clear` → old pane (and its browser pane) closes, new one opens. Quit Claude → both close.
    Two Claude tabs → each pane shows only its own session's media, in its own browser pane.
+8. Have Claude re-render one figure a few times: one entry with `↻N`, not a stack. Click the imgwatch
+   pane, press `p`, make another figure: pinned one on top, newest under it. `p` again unpins.
+9. Press `a`: the mark-up page opens in the browser pane; drag a box, type a note, Send, then send
+   Claude a message ("fix what I marked"): Claude gets the marked-up copy and coordinates.
+10. Ask Claude to write a Markdown note with a table and a mermaid block, read a notebook, and read a
+    FASTA alignment; ask it to take a Chrome screenshot (inline image shows).
 
 ## Uninstall
-Remove the two hook entries from `~/.claude/settings.json`, delete the four symlinks,
+Remove the three hook entries from `~/.claude/settings.json`, delete the six symlinks,
 `~/.config/imgwatch`, `~/.claude/imgwatch` and (if installed) `DynamicProfiles/imgwatch.json`. Pre-install files are in `~/bin/backups/imgwatch_pre-repo_*`.
