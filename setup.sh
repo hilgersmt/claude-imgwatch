@@ -208,9 +208,13 @@ else
   say "signed app from the iTerm2 author). Without it iTerm2 quietly ignores browser profiles."
   if "$repo/bin/imgwatch-plugin" status >/dev/null 2>&1; then
     good "plugin installed: $("$repo/bin/imgwatch-plugin" status | sed 's/^ok: //')"
+    if "$repo/bin/imgwatch-plugin" status | grep -q '/Downloads/'; then
+      meh "it lives in Downloads: a cleanup there would silently break browser panes"
+      ask "Move it to /Applications?" && "$repo/bin/imgwatch-plugin" move </dev/null | sed 's/^/  /'
+    fi
   elif ask "Download and install it now (from iterm2.com; its signature is checked before installing)?"; then
     "$repo/bin/imgwatch-plugin" install </dev/null | sed 's/^/  /' && good "plugin installed" \
-      || nope "could not install it; get it from https://iterm2.com/browser-plugin.html (unzip into /Applications)"
+      || nope "could not install it; get it from https://iterm2.com/browser-plugin.html (unzip, move the app to /Applications)"
   else
     say "  ${D}Later: $repo/bin/imgwatch-plugin install, or https://iterm2.com/browser-plugin.html${N}"
   fi

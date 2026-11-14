@@ -5,6 +5,7 @@
 #   imgwatch-plugin verify APP        check it is George Nachman's signed, notarized plugin
 #   imgwatch-plugin install [-d DIR]  download the official zip, verify, unzip into /Applications
 #                                     (or ~/Applications if /Applications isn't writable, or DIR)
+#   imgwatch-plugin move [APP] [-d DIR]  move an installed copy (e.g. left in ~/Downloads) into /Applications
 # The download is the versioned zip from iterm2.com (GitHub mirror as fallback); nothing is
 # installed unless verify passes. iTerm2 finds the plugin by itself; a restart may be needed.
 set -u
@@ -63,8 +64,21 @@ case "${1:-status}" in
       /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
         -f "$dest/iTermBrowserPlugin.app" 2>/dev/null ;; esac
     echo "installed $dest/iTermBrowserPlugin.app" ;;
+  move)  # move [APP] [-d DIR]: relocate an installed copy (e.g. from ~/Downloads) into an Applications folder
+    src=; dest=
+    shift; while [ $# -gt 0 ]; do case $1 in -d) dest=$2; shift 2 ;; *) src=$1; shift ;; esac; done
+    [ -n "$src" ] || src=$(find_app) || { echo "not installed"; exit 1; }
+    verify "$src" >/dev/null || { echo "refusing to move: $(verify "$src")"; exit 1; }
+    if [ -z "$dest" ]; then dest=/Applications; [ -w /Applications ] || dest=~/Applications; fi
+    [ "$(cd "$(dirname "$src")" && pwd -P)" = "$(mkdir -p "$dest" && cd "$dest" && pwd -P)" ] && { echo "already in $dest"; exit 0; }
+    [ -e "$dest/iTermBrowserPlugin.app" ] && { echo "$dest/iTermBrowserPlugin.app already exists; remove one copy first"; exit 1; }
+    mv "$src" "$dest/" || exit 1
+    case "$dest" in /Applications|"$HOME/Applications")
+      /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+        -f "$dest/iTermBrowserPlugin.app" 2>/dev/null ;; esac
+    echo "moved to $dest/iTermBrowserPlugin.app (works right away; iTerm2 updates its path hint on its next start)" ;;
   -h|--help|help)
-    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
   *)
-    echo "usage: imgwatch-plugin [status | verify APP | install [-d DIR]]"; exit 2 ;;
+    echo "usage: imgwatch-plugin [status | verify APP | install [-d DIR] | move [APP] [-d DIR]]"; exit 2 ;;
 esac

@@ -95,7 +95,9 @@ Updating later = `git pull` (the symlinks pick it up; the next new Claude sessio
 install for you (`imgwatch-plugin install`: downloads the official versioned zip from iterm2.com,
 GitHub mirror as fallback, and installs into /Applications only if the bundle id, signature, Team ID
 H7V7XYVQ7D (George Nachman) and notarization all check out; `imgwatch-plugin status` / `verify`
-check an existing copy). Manual route: https://iterm2.com/browser-plugin.html. It is a separate
+check an existing copy). Manual route: https://iterm2.com/browser-plugin.html, unzip and move `iTermBrowserPlugin.app` to
+`/Applications` (don't run it). It also works from `~/Downloads`, but a Downloads cleanup would then
+silently break the browser pane (`imgwatch-plugin move` relocates it). It is a separate
 download; without it iTerm2 silently ignores every Browser-type profile (including `imgbrowser`) and
 imgwatch's split fails with `INVALID_PROFILE_NAME`, so HTML and structures fall back to links.
 `imgwatch --doctor` asks iTerm2 which profiles it actually loaded and flags this.

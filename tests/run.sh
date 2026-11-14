@@ -97,6 +97,10 @@ check "imgwatch-plugin parses; verify rejects an unsigned copy" "bash -n '$repo/
 if [ -d /Applications/iTermBrowserPlugin.app ]; then
   check "imgwatch-plugin verifies the installed plugin" "'$repo/bin/imgwatch-plugin' verify /Applications/iTermBrowserPlugin.app >/dev/null"
 fi
+if [ -d /Applications/iTermBrowserPlugin.app ]; then
+  mkdir -p "$T/Downloads" && ditto /Applications/iTermBrowserPlugin.app "$T/Downloads/iTermBrowserPlugin.app"
+  check "imgwatch-plugin move relocates a copy out of Downloads" "'$repo/bin/imgwatch-plugin' move '$T/Downloads/iTermBrowserPlugin.app' -d '$T/Apps' >/dev/null && [ -d '$T/Apps/iTermBrowserPlugin.app' ] && [ ! -e '$T/Downloads/iTermBrowserPlugin.app' ]"
+fi
 if [ -n "${IMGWATCH_TEST_NET:-}" ]; then  # opt-in: real download (~0.5 MB) + verification
   check "imgwatch-plugin install downloads and verifies (network)" "'$repo/bin/imgwatch-plugin' install -d '$T/plug' >/dev/null && [ -d '$T/plug/iTermBrowserPlugin.app' ]"
 else skp "plugin download (set IMGWATCH_TEST_NET=1)"; fi

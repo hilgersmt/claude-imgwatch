@@ -4,12 +4,14 @@ Versions are git tags (`vMAJOR.MINOR.PATCH`); `imgwatch -V` and the pane banner 
 commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits past a release.
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
-## Unreleased
+## v0.0.8 — 2026-11-13
 - `imgwatch-plugin` (`status` / `verify APP` / `install`): installs the iTerm2 Browser Plugin for you —
   downloads the official versioned zip (iterm2.com, GitHub mirror as fallback) and installs into
   /Applications only if bundle id, signature, Team ID (George Nachman) and notarization check out.
   `setup.sh` offers it (the iTerm2 restart is the only manual part left); the skill uses it; the
   doctor's FAIL message names it; `install.sh` links it into `~/bin`.
+- `imgwatch-plugin move` / `setup.sh`: a plugin left in `~/Downloads` is moved into /Applications (a Downloads
+  cleanup would otherwise silently break browser panes); docs say /Applications for the manual route.
 
 ## v0.0.7 — 2026-11-13
 - Doctor asks iTerm2 (Python API) which profiles it actually loaded. A Browser profile that exists on
