@@ -40,6 +40,7 @@ for m in iterm2 selenium; do "$py" -c "import $m" 2>/dev/null && echo "  $py has
 say "files"
 link bin/imgwatch      ~/bin/imgwatch
 link bin/imgpane       ~/bin/imgpane
+link bin/imgwatch-plugin ~/bin/imgwatch-plugin
 link hooks/imgpane-autostart.sh ~/.claude/hooks/imgpane-autostart.sh
 link hooks/imgwatch-enqueue.sh  ~/.claude/hooks/imgwatch-enqueue.sh
 

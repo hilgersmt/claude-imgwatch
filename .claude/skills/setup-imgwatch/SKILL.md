@@ -62,12 +62,17 @@ If it fails, give these exact steps and wait for the user to say done, then re-c
 If it still fails after they say it's done, ask them to confirm the box is ticked; offer to skip
 (web pages then fall back to screenshots or links).
 
-## 5b. Manual: iTerm2 Browser Plugin (skip if the iterm2 module isn't installed)
-iTerm2's browser panes need a separate plugin; without it iTerm2 silently ignores Browser-type
-profiles. Check: `~/bin/imgwatch --doctor | grep profile` should say "loaded by iTerm2". If it says
-"install the iTerm2 Browser Plugin", ask the user to (it is a download they do themselves):
-1. Open https://iterm2.com/browser-plugin.html, download the plugin and install it as that page says.
-2. Quit and reopen iTerm2.
+## 5b. iTerm2 Browser Plugin (skip if the iterm2 module isn't installed)
+iTerm2's browser panes need a separate plugin (a small signed app by the iTerm2 author); without it
+iTerm2 silently ignores Browser-type profiles. Check: `~/bin/imgwatch --doctor | grep profile`
+should say "loaded by iTerm2". If not:
+1. `bin/imgwatch-plugin status`. Not installed → ask, then `bin/imgwatch-plugin install`: it downloads
+   the official versioned zip from iterm2.com (GitHub mirror as fallback), refuses to install unless
+   the bundle id, signature, Team ID H7V7XYVQ7D (George Nachman) and notarization all check out,
+   and unzips into /Applications (or ~/Applications).
+2. iTerm2 only loads browser profiles at startup: ask the user to quit iTerm2 (⌘Q) and reopen it.
+   This ends this Claude session too, so first tell them to start `claude` again in the repo and
+   say "continue imgwatch setup"; re-check with the doctor then.
 Then re-check. If it still isn't loaded: iTerm2 > Settings > Advanced > "Enable browser-style
 profiles" must be Yes (the default).
 

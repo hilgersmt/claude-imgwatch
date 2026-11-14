@@ -198,18 +198,29 @@ else
   done
 fi
 
-# ---------------------------------------------------------------- 5b browser plugin (manual)
-title "iTerm2 Browser Plugin (one download)"
+# ---------------------------------------------------------------- 5b browser plugin
+title "iTerm2 Browser Plugin"
 plug_ok() { "$repo/bin/imgwatch" --doctor </dev/null 2>/dev/null | grep -q 'loaded by iTerm2'; }
 if ! has iterm2 || [ -z "$(sed -n 's/^IMGWATCH_BROWSER_PROFILE=//p' "$cfg")" ]; then meh "skipped (no browser lane)"
 elif plug_ok; then good "iTerm2 has loaded the browser profile"
 else
-  say "Web pages open in an iTerm2 browser pane, which needs iTerm2's free Browser Plugin. Without it"
-  say "iTerm2 quietly ignores browser profiles."
-  say "  1. Open ${B}https://iterm2.com/browser-plugin.html${N}, download the plugin and install it as the page says."
-  say "  2. Quit iTerm2 (⌘Q) and reopen it, then run ${B}$repo/setup.sh${N} again from the new window."
-  say "  ${D}(Still not loaded after that? Settings → Advanced → 'Enable browser-style profiles' must be Yes.)${N}"
-  pause && { plug_ok && good "browser profile loaded" || meh "not loaded yet; restart iTerm2 and re-run ./setup.sh"; }
+  say "Web pages open in an iTerm2 browser pane, which needs iTerm2's free Browser Plugin (a small"
+  say "signed app from the iTerm2 author). Without it iTerm2 quietly ignores browser profiles."
+  if "$repo/bin/imgwatch-plugin" status >/dev/null 2>&1; then
+    good "plugin installed: $("$repo/bin/imgwatch-plugin" status | sed 's/^ok: //')"
+  elif ask "Download and install it now (from iterm2.com; its signature is checked before installing)?"; then
+    "$repo/bin/imgwatch-plugin" install </dev/null | sed 's/^/  /' && good "plugin installed" \
+      || nope "could not install it; get it from https://iterm2.com/browser-plugin.html (unzip into /Applications)"
+  else
+    say "  ${D}Later: $repo/bin/imgwatch-plugin install, or https://iterm2.com/browser-plugin.html${N}"
+  fi
+  if plug_ok; then good "iTerm2 has loaded the browser profile"
+  elif "$repo/bin/imgwatch-plugin" status >/dev/null 2>&1; then
+    say "iTerm2 only picks up browser profiles when it starts, so one restart is needed:"
+    say "  ${B}Quit iTerm2 (⌘Q), reopen it, and run $repo/setup.sh again${N} — it skips what's already done."
+    say "  ${D}(Still not loaded after that? Settings → Advanced → 'Enable browser-style profiles' must be Yes.)${N}"
+    ask_no "Continue without the browser pane for now?" || exit 0
+  fi
 fi
 
 # ---------------------------------------------------------------- 6 automation (manual prompt)

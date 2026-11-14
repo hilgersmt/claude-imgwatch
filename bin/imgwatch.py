@@ -304,7 +304,7 @@ def doctor():
                 out("ok", f"profile '{prof}' is a Browser profile, loaded by iTerm2")
             else:
                 out("FAIL", f"profile '{prof}' is defined but iTerm2 has not loaded it: install the iTerm2 "
-                            "Browser Plugin (https://iterm2.com/browser-plugin.html), then restart iTerm2")
+                            f"Browser Plugin ({HERE / 'imgwatch-plugin'} install), then restart iTerm2")
     # hooks and links
     sp = Path.home() / ".claude/settings.json"
     try:

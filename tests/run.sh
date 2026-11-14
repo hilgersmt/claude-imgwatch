@@ -93,6 +93,13 @@ echo "static"
 check "imgwatch.py compiles" "'$py' -m py_compile '$repo/bin/imgwatch.py'"
 check "shell scripts parse" "bash -n '$repo/bin/imgpane' && bash -n '$repo/bin/imgwatch' && bash -n '$repo'/hooks/*.sh && bash -n '$repo/install.sh'"
 check "setup.sh parses and refuses to run unattended" "bash -n '$repo/setup.sh' && ! '$repo/setup.sh' </dev/null >/dev/null 2>&1"
+check "imgwatch-plugin parses; verify rejects an unsigned copy" "bash -n '$repo/bin/imgwatch-plugin' && mkdir -p '$T/fake/iTermBrowserPlugin.app/Contents' && printf '<plist><dict><key>CFBundleIdentifier</key><string>com.googlecode.iterm2.iTermBrowserPlugin</string></dict></plist>' > '$T/fake/iTermBrowserPlugin.app/Contents/Info.plist' && ! '$repo/bin/imgwatch-plugin' verify '$T/fake/iTermBrowserPlugin.app' >/dev/null"
+if [ -d /Applications/iTermBrowserPlugin.app ]; then
+  check "imgwatch-plugin verifies the installed plugin" "'$repo/bin/imgwatch-plugin' verify /Applications/iTermBrowserPlugin.app >/dev/null"
+fi
+if [ -n "${IMGWATCH_TEST_NET:-}" ]; then  # opt-in: real download (~0.5 MB) + verification
+  check "imgwatch-plugin install downloads and verifies (network)" "'$repo/bin/imgwatch-plugin' install -d '$T/plug' >/dev/null && [ -d '$T/plug/iTermBrowserPlugin.app' ]"
+else skp "plugin download (set IMGWATCH_TEST_NET=1)"; fi
 check "-V prints a version" "'$repo/bin/imgwatch' -V | grep -qE '^imgwatch (v[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)? \([0-9a-f]+|[0-9a-f]{7})'"
 check "CHANGELOG has an entry for the current release tag" "t=\$(git -C '$repo' describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null); [ -z \"\$t\" ] || grep -q \"^## \$t \" '$repo/CHANGELOG.md'"
 q=$HOME/.claude/imgwatch/queue

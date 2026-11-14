@@ -91,7 +91,11 @@ imgwatch --doctor                       # re-check any time
 Updating later = `git pull` (the symlinks pick it up; the next new Claude session uses it).
 
 ### iTerm2 setup (manual, once)
-**Install the iTerm2 Browser Plugin** (https://iterm2.com/browser-plugin.html), then restart iTerm2. It is a separate
+**The iTerm2 Browser Plugin** must be installed, then iTerm2 restarted. `setup.sh` offers to do the
+install for you (`imgwatch-plugin install`: downloads the official versioned zip from iterm2.com,
+GitHub mirror as fallback, and installs into /Applications only if the bundle id, signature, Team ID
+H7V7XYVQ7D (George Nachman) and notarization all check out; `imgwatch-plugin status` / `verify`
+check an existing copy). Manual route: https://iterm2.com/browser-plugin.html. It is a separate
 download; without it iTerm2 silently ignores every Browser-type profile (including `imgbrowser`) and
 imgwatch's split fails with `INVALID_PROFILE_NAME`, so HTML and structures fall back to links.
 `imgwatch --doctor` asks iTerm2 which profiles it actually loaded and flags this.

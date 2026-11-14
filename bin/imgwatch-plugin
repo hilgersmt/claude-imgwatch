@@ -1,0 +1,70 @@
+#!/bin/bash
+# imgwatch-plugin: find, verify and install the iTerm2 Browser Plugin (iTermBrowserPlugin.app).
+# iTerm2's browser panes need it; without it iTerm2 silently drops Browser-type profiles.
+#   imgwatch-plugin status            where it is installed (exit 1 if not found)
+#   imgwatch-plugin verify APP        check it is George Nachman's signed, notarized plugin
+#   imgwatch-plugin install [-d DIR]  download the official zip, verify, unzip into /Applications
+#                                     (or ~/Applications if /Applications isn't writable, or DIR)
+# The download is the versioned zip from iterm2.com (GitHub mirror as fallback); nothing is
+# installed unless verify passes. iTerm2 finds the plugin by itself; a restart may be needed.
+set -u
+VER=${IMGWATCH_PLUGIN_VERSION:-1.0}
+ID=com.googlecode.iterm2.iTermBrowserPlugin
+TEAM=H7V7XYVQ7D  # Developer ID Application: George Nachman
+URLS=("https://iterm2.com/downloads/browser-plugin/iTermBrowserPlugin-$VER.zip"
+      "https://github.com/gnachman/iterm2-website/raw/refs/heads/master/downloads/browser-plugin/iTermBrowserPlugin-$VER.zip")
+
+find_app() {
+  local p
+  for p in /Applications/iTermBrowserPlugin.app ~/Applications/iTermBrowserPlugin.app \
+           "$(defaults read com.googlecode.iterm2 BrowserPluginPathHint 2>/dev/null)" \
+           $(mdfind "kMDItemCFBundleIdentifier == '$ID'" 2>/dev/null | head -5); do
+    [ -n "$p" ] && [ -d "$p" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+verify() {  # verify APP: bundle id, intact signature, George Nachman's team, notarized
+  local app=$1 id team
+  [ -d "$app" ] || { echo "not found: $app"; return 1; }
+  id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null)
+  [ "$id" = "$ID" ] || { echo "wrong bundle id: ${id:-none}"; return 1; }
+  codesign --verify --deep --strict "$app" 2>/dev/null || { echo "signature broken or missing"; return 1; }
+  team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+  [ "$team" = "$TEAM" ] || { echo "signed by team ${team:-none}, expected $TEAM (George Nachman)"; return 1; }
+  spctl -a -t exec "$app" >/dev/null 2>&1 || { echo "not accepted by Gatekeeper (not notarized?)"; return 1; }
+  echo "ok: $app ($id $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" 2>/dev/null), team $TEAM, notarized)"
+}
+
+case "${1:-status}" in
+  status)
+    app=$(find_app) || { echo "not installed"; exit 1; }
+    verify "$app" ;;
+  verify)
+    verify "${2:?usage: imgwatch-plugin verify APP}" ;;
+  install)
+    dest=; [ "${2:-}" = -d ] && dest=${3:?usage: imgwatch-plugin install [-d DIR]}
+    if app=$(find_app) && [ -z "$dest" ]; then echo "already installed: $app"; verify "$app"; exit; fi
+    if [ -z "$dest" ]; then dest=/Applications; [ -w /Applications ] || dest=~/Applications; fi
+    mkdir -p "$dest" || exit 1
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/itbp.XXXXXX"); trap 'rm -rf "$tmp"' EXIT
+    got=
+    for u in "${URLS[@]}"; do
+      echo "downloading $u"
+      curl -fsSL --max-time 120 -o "$tmp/p.zip" "$u" && got=1 && break
+    done
+    [ -n "$got" ] || { echo "download failed"; exit 1; }
+    ditto -x -k "$tmp/p.zip" "$tmp/x" || { echo "unzip failed"; exit 1; }
+    app=$(find "$tmp/x" -maxdepth 2 -name 'iTermBrowserPlugin.app' -type d | head -1)
+    verify "$app" || { echo "refusing to install: verification failed"; exit 1; }
+    rm -rf "$dest/iTermBrowserPlugin.app"
+    ditto "$app" "$dest/iTermBrowserPlugin.app" || exit 1
+    case "$dest" in /Applications|"$HOME/Applications")  # let LaunchServices (and so iTerm2) know about it
+      /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+        -f "$dest/iTermBrowserPlugin.app" 2>/dev/null ;; esac
+    echo "installed $dest/iTermBrowserPlugin.app" ;;
+  -h|--help|help)
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *)
+    echo "usage: imgwatch-plugin [status | verify APP | install [-d DIR]]"; exit 2 ;;
+esac
