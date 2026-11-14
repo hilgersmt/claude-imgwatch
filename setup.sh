@@ -206,7 +206,8 @@ elif plug_ok; then good "iTerm2 has loaded the browser profile"
 else
   say "Web pages open in an iTerm2 browser pane, which needs iTerm2's free Browser Plugin. Without it"
   say "iTerm2 quietly ignores browser profiles."
-  say "  1. Open ${B}https://iterm2.com/browser-plugin.html${N}, download the plugin and install it as the page says."
+  say "  1. Open ${B}https://iterm2.com/browser-plugin.html${N}, download the zip and unzip it."
+  say "     Move ${B}iTermBrowserPlugin.app${N} to ${B}/Applications${N} (no need to open it; don't leave it in Downloads)."
   say "  2. Quit iTerm2 (⌘Q) and reopen it, then run ${B}$repo/setup.sh${N} again from the new window."
   say "  ${D}(Still not loaded after that? Settings → Advanced → 'Enable browser-style profiles' must be Yes.)${N}"
   pause && { plug_ok && good "browser profile loaded" || meh "not loaded yet; restart iTerm2 and re-run ./setup.sh"; }
