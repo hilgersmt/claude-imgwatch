@@ -219,6 +219,13 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
       +300 ms, +1 s and on every ResizeObserver tick, and relayouts fixed-width figures wider
       than the pane down to the pane width. The pane's address bar therefore shows the cache path.
     - A brand-new browser pane shows iTerm2's onboarding page until the first URL loads.
+  - **Served pages** (`IMGWATCH_URLMAP` in the config): a page that loads its data from a web server
+    (`fetch("/api/...")`, e.g. a local dashboard) renders empty as `file://`. Map the file, or a folder,
+    to the URL that serves it (`"PATH=URL;PATH=URL"`, folder = URL + relative path, longest match wins)
+    and every lane uses the live URL instead: browser pane loads it, shot screenshots it (never cached),
+    link points at it. An unmapped page containing `fetch("/…")` prints a hint saying so.
+    One-off without config: write a tiny page with `<meta http-equiv="refresh" content="0;url=http://…">`
+    into the scratch dir and it follows the redirect.
   - **shot**: headless Chrome via selenium, viewport `--shot-px` (1400) wide at 2× scale,
     waits `--shot-wait` (2 s) for JS, grows the window to the page height (max 4000) and
     screenshots. Chrome **must** get `--use-gl=angle --use-angle=swiftshader

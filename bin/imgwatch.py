@@ -181,6 +181,43 @@ def file_url(p):
     return "file://localhost" + urllib.parse.quote(os.path.abspath(p))
 
 
+# Pages that load their data from a web server (fetch("/api/...")) render empty as file://.
+# IMGWATCH_URLMAP maps a file or folder to the URL that serves it, so the live page is shown
+# instead: "PATH=URL" entries separated by ';' or newlines, e.g.
+#   IMGWATCH_URLMAP="~/claude-admin/energy/dashboard.html=http://127.0.0.1:8790/"
+# A folder maps every page under it (URL + relative path). Longest match wins.
+def parse_urlmap(raw):
+    out = []
+    for ent in re.split(r"[;\n]+", raw or ""):
+        path, eq, url = ent.strip().partition("=")
+        if eq and path.strip() and re.match(r"https?://", url.strip()):
+            out.append((os.path.realpath(os.path.expanduser(path.strip())), url.strip()))
+    return sorted(out, key=lambda t: -len(t[0]))
+
+
+URLMAP = parse_urlmap(os.environ.get("IMGWATCH_URLMAP"))
+NEEDS_SERVER = re.compile(r"""fetch\(\s*[`'"]/(?!/)""")   # fetch("/api/...") = same-origin server call
+
+
+def served_url(p):
+    """The live URL for a page a local server serves (IMGWATCH_URLMAP), else None."""
+    rp = os.path.realpath(p)
+    for path, url in URLMAP:
+        if rp == path:
+            return url
+        if rp.startswith(path.rstrip("/") + "/"):
+            return url.rstrip("/") + "/" + urllib.parse.quote(os.path.relpath(rp, path))
+    return None
+
+
+def needs_server(p):
+    try:
+        with open(p, "r", errors="replace") as f:
+            return bool(NEEDS_SERVER.search(f.read(2_000_000)))
+    except OSError:
+        return False
+
+
 # ---------------------------------------------------------------- housekeeping
 def prune():
     """Startup housekeeping: cap the cache, trim the queue, drop stale browser-pane state."""
@@ -873,11 +910,12 @@ def browser_load(url):
     return ok
 
 
-def html_to_png(p):
-    """Screenshot a local page with headless Chrome (cached by path+mtime+params)."""
+def html_to_png(p, url=None):
+    """Screenshot a local page with headless Chrome (cached by path+mtime+params).
+    url: a live page served for p (IMGWATCH_URLMAP); its content changes, so it gets a fresh shot each time."""
     global _driver
     CACHE.mkdir(parents=True, exist_ok=True)
-    key = cache_key(p, a.shot_px, a.shot_wait)
+    key = cache_key(p, a.shot_px, a.shot_wait, url or "", time.time() if url else 0)
     if not key:
         return None
     png = CACHE / (key + ".png")
@@ -896,7 +934,7 @@ def html_to_png(p):
                 o.add_argument(f)
             _driver = webdriver.Chrome(options=o)
             _driver.set_page_load_timeout(60)
-        _driver.get("file://" + urllib.parse.quote(os.path.abspath(p)))
+        _driver.get(url or "file://" + urllib.parse.quote(os.path.abspath(p)))
         time.sleep(a.shot_wait)
         h = _driver.execute_script(
             "return Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)") or 900
@@ -920,21 +958,27 @@ def show_html(p, orig=None):
     mode = html_mode()
     if mode == "off":
         return None
+    url = served_url(p) if orig is None else None
+    if url:
+        print(f"\033[2m  served page → {url}\033[0m", flush=True)
+    elif orig is None and needs_server(p):
+        warn("this page loads data from its web server (fetch(\"/...\")), so as a file it may look empty; "
+             "map it to its URL with IMGWATCH_URLMAP in ~/.config/imgwatch/config")
     if mode == "browser":
         print("\033[2m  → browser pane\033[0m", flush=True)
         # iTerm2's browser rejects file:///path as "Invalid URL" but takes file://localhost/path
-        if browser_load(file_url(fit_copy(p) if orig is None else p)):
+        if browser_load(url or file_url(fit_copy(p) if orig is None else p)):
             return None
         warn("no browser pane — falling back to a link")
         mode = "link"
     if mode == "shot":
         print(f"\033[2m  → headless-Chrome screenshot ({a.shot_px}px, {a.shot_wait:g}s settle)\033[0m", flush=True)
-        png = html_to_png(p)
+        png = html_to_png(p, url)
         if png:
             return png
         mode = "link"
     # link: OSC 8 hyperlink — cmd-click opens the page (for structures: the Mol* page) in the default browser
-    print("  " + link(file_url(p), f"\033[4;36m{os.path.basename(orig or p)}\033[0m"), flush=True)
+    print("  " + link(url or file_url(p), f"\033[4;36m{os.path.basename(orig or p)}\033[0m"), flush=True)
     return None
 
 

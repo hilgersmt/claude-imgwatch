@@ -4,6 +4,11 @@ Versions are git tags (`vMAJOR.MINOR.PATCH`); `imgwatch -V` and the pane banner 
 commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits past a release.
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
+## Unreleased
+- **Served pages**: `IMGWATCH_URLMAP="PATH=URL;…"` (config) maps an HTML file or folder to the local server
+  that serves it, so dashboards that `fetch("/api/…")` show live instead of as an empty `file://` page
+  (browser, shot and link lanes). Unmapped pages that fetch from their server get a hint. Three new tests.
+
 ## v0.0.8 — 2026-11-13
 - `imgwatch-plugin` (`status` / `verify APP` / `install`): installs the iTerm2 Browser Plugin for you —
   downloads the official versioned zip (iterm2.com, GitHub mirror as fallback) and installs into

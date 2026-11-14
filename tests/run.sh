@@ -52,6 +52,7 @@ with PdfPages(f"{d}/doc.pdf") as pdf:
     for k in range(3):
         f, ax = plt.subplots(); ax.set_title(f"page {k+1}"); pdf.savefig(f); plt.close(f)
 open(f"{d}/page.html", "w").write("<!doctype html><html><head></head><body><p>hello</p></body></html>")
+open(f"{d}/dash.html", "w").write("<!doctype html><body><p id=n></p><script>fetch('/api/now').then(r => r.json())</script></body>")
 # a tiny but valid PDB (3 residues of crambin)
 open(f"{d}/tiny.pdb", "w").write("""\
 ATOM      1  N   THR A   1      17.047  14.099   3.625  1.00 13.79           N
@@ -167,6 +168,7 @@ rm -f "$c"/new*.png; : > "$q"
 # ------------------------------------------------------------------ rendering
 echo "rendering (headless watcher, link mode)"
 cd "$T/watch"
+IMGWATCH_URLMAP="$T/watch/served.html=http://127.0.0.1:9/dash/;$T/watch/site=http://127.0.0.1:9/" \
 TERM_PROGRAM=iTerm.app COLUMNS=100 "$repo/bin/imgwatch" --session S1 --html-mode link "$T/watch" > "$T/watch.log" 2>&1 & W=$!
 check "watcher starts with a banner" "waitfor '+ hook queue' 5"
 cp "$T/fix/single.png" "$T/watch/"
@@ -186,6 +188,12 @@ cp "$T/fix/doc.pdf" "$T/watch/"
 check "PDF: page 1 of 3" "waitfor 'page 1 of 3' 10"
 cp "$T/fix/page.html" "$T/watch/"
 check "HTML (link mode): OSC 8 link to the page" "waitfor '${E}]8;;file://localhost$T/watch/page.html${E}\\${E}[4;36m' 8"
+cp "$T/fix/dash.html" "$T/watch/served.html"
+check "HTML served by a local server (IMGWATCH_URLMAP file): link to its URL" "waitfor '${E}]8;;http://127.0.0.1:9/dash/${E}\\' 8"
+mkdir -p "$T/watch/site"; cp "$T/fix/page.html" "$T/watch/site/a b.html"
+check "IMGWATCH_URLMAP folder: URL + quoted relative path" "waitfor '${E}]8;;http://127.0.0.1:9/a%20b.html${E}\\' 8"
+cp "$T/fix/dash.html" "$T/watch/"
+check "unmapped page that fetch()es its server: hint to map it" "waitfor 'map it to its URL with IMGWATCH_URLMAP' 8"
 cp "$T/fix/tiny.pdb" "$T/watch/"
 if waitfor 'structure → Mol*' 8 && waitfor 'tiny.pdb.html' 40; then
   pg=$(ls "$c"/*_tiny.pdb.html 2>/dev/null | head -1)
