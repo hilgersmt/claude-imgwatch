@@ -10,3 +10,12 @@ IMGPANE_WIDTH=33
 # Map a file or folder to the URL that serves it and the pane shows the live page instead.
 # "PATH=URL" entries separated by ';'. A folder maps every page under it.
 #IMGWATCH_URLMAP="~/my-dashboard/index.html=http://127.0.0.1:8080/;~/site=http://127.0.0.1:8000/"
+# Images inside tool results (Chrome screenshots, MCP tools) are shown unless turned off or skipped.
+# Sites: comma-separated hosts ("example.com" also covers its subdomains; globs ok). Tools: name substrings.
+#IMGWATCH_INLINE=off
+#IMGWATCH_INLINE_SKIP_SITES="mail.google.com,*.bank.com"
+#IMGWATCH_INLINE_SKIP_TOOLS="computer-use"
+# Markdown / CSV / TSV / JSON show when Claude writes them; 1 = also when it only reads them.
+#IMGWATCH_DOCS_ON_READ=1
+# Marks (annotate page) older than this many minutes reach Claude as one summary line, not in full.
+#IMGWATCH_MARK_MAX_MIN=30

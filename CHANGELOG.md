@@ -5,6 +5,24 @@ commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits 
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
 ## Unreleased
+- **Atom picking**: marking up a structure (key `a`, `--annotate`) opens Mol* with a pick panel; Claude
+  gets each clicked atom exactly (chain/residue/atom/altloc from the model, Coot/Moorhen CID, PyMOL
+  selection, xyz) with your notes and a snapshot of the view.
+- **Before/after** (key `b`, `imgwatch --compare [A B]`): pinned (or previous) image vs the current one as
+  a slider, blink, side by side or difference image.
+- **History keys**: `←`/`→` browse earlier items one at a time, `c` copies the image (pages: the path) to
+  the clipboard, `o` opens it; all keys act on the item being viewed.
+- **Self-reload**: the pane restarts in place when `imgwatch.py` changes (git pull), keeping its items;
+  a version that doesn't compile is reported and not loaded. `--no-reload` to turn off.
+- **Old marks**: marks older than 30 min (`IMGWATCH_MARK_MAX_MIN`) reach Claude as one line with their
+  age, not as if they were about the new message.
+- **Unaligned FASTA** is aligned with MAFFT or Clustal Omega when installed; otherwise the page says
+  it is unaligned.
+- **Screenshot privacy**: `IMGWATCH_INLINE=off`, `IMGWATCH_INLINE_SKIP_SITES`, `IMGWATCH_INLINE_SKIP_TOOLS`.
+- New pages: **CSV/TSV** (sortable, filterable table), **JSON** (collapsible tree), **REFMAC5 /
+  phenix.refine logs** (R/Rfree per cycle, geometry, initial → final). Documents on Read with
+  `IMGWATCH_DOCS_ON_READ=1`. Phenix parsing is written from the documented log format and has not
+  yet been run on a real phenix.refine log.
 - **Mark up** an item (key `a` in the pane, `imgwatch --annotate [PATH]` from Claude): a localhost page
   where you click points / drag boxes and add notes; Send burns them into a copy and a new
   **UserPromptSubmit hook** (`imgwatch-annotations.sh`) hands Claude the marked-up copy, pixel

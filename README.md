@@ -16,7 +16,10 @@ split pane that shows the files that session produces or opens, as they appear:
 | PowerPoint, Word, Excel, Keynote, Pages, Numbers | first slide/page (Quick Look) |
 | Markdown (`.md`, written or edited by Claude) | rendered page: tables, code, Obsidian `[[links]]`/`![[embeds]]`/callouts, mermaid |
 | Jupyter notebook (`.ipynb`) | static page: markdown, code, saved outputs (plots, tables, tracebacks); not re-run |
-| Sequences / alignments (FASTA, A3M, Clustal, Stockholm) | coloured alignment in 60-residue blocks, conservation track, % identity |
+| Sequences / alignments (FASTA, A3M, Clustal, Stockholm) | coloured alignment in 60-residue blocks, conservation track, % identity; unaligned sequences are aligned with MAFFT or Clustal Omega if installed |
+| CSV / TSV (written by Claude or a script) | table: click a header to sort (numeric columns as numbers), filter box |
+| JSON (written by Claude or a script) | collapsible tree, two levels open |
+| REFMAC5 / phenix.refine log (`.log`) | R and Rfree per cycle (chart + table), rms bond/angle charts, initial → final; other logs are ignored |
 | images returned inside a tool result (Chrome screenshots, MCP tools) | saved and shown like any still |
 
 Every header's file name and folder are clickable (cmd-click opens them). An item shown again right
@@ -30,8 +33,21 @@ newest item shows under it, both shrunk to fit, for "make it look like this". `p
 **Mark up** (key `a` in the pane, or `imgwatch --annotate [PATH]` from Claude): opens the latest item
 (or PATH) in a page where you click for a point or drag for a box, type a note per mark, and press
 **Send**. The marks go to Claude **with your next message**: a marked-up copy plus pixel coordinates
-and your notes, so "this label" needs no describing. Pages (HTML, Mol*, notebooks) are marked up from
-a screenshot.
+and your notes, so "this label" needs no describing. Pages (HTML, notebooks) are marked up from a
+screenshot. **Structures** open in Mol* with a pick panel instead: click atoms, note each, Send, and Claude
+gets each atom exactly (`A/CYS 481/SG`, the Coot/Moorhen CID `//A/481/SG`, a PyMOL selection, xyz) plus a
+snapshot of the view. Marks older than 30 minutes (`IMGWATCH_MARK_MAX_MIN`) are assumed to belong to an
+earlier message: Claude gets one line with their age instead of the full marks.
+
+**Browse and compare** (keys in the pane): `←`/`→` step through earlier items one at a time (`→` past the
+newest returns to live); every key acts on the item you are looking at. `b` opens **before/after**: the
+pinned item (or the previous image) against this one, as a slider, blink, side by side, or a difference
+image (black = identical); `imgwatch --compare A B` from Claude. `c` copies the image to the clipboard (pages:
+the path), `o` opens the file in its default app.
+
+**Updates apply themselves**: when `imgwatch.py` changes (`git pull`, an edit) the pane restarts in place
+within a few seconds, keeping what it showed; a version that doesn't compile is reported and the old one
+keeps running.
 
 Files show up when Claude reads or writes them, when they appear in the session's scratch dir or
 working dir, **or when a Bash command or MCP tool mentions a media file it just wrote** (a script
@@ -170,13 +186,18 @@ claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 wi
 
 ### 3. `hooks/imgwatch-enqueue.sh` (PostToolUse, all tools)
 - Read/Write/Edit: if `tool_input.file_path` has a media extension, appends
-  `session_id<TAB>path` to `~/.claude/imgwatch/queue` (always, even for old files). Markdown is the
-  exception: only on Write/Edit (Claude reads notes constantly) and never under `~/.claude` (memory,
-  plans), and it is never picked out of Bash output or the watched folders.
+  `session_id<TAB>path` to `~/.claude/imgwatch/queue` (always, even for old files). Documents
+  (Markdown, CSV/TSV, JSON) are the exception: only on Write/Edit (Claude reads them constantly;
+  `IMGWATCH_DOCS_ON_READ=1` shows them on Read too) and never under `~/.claude` (memory, plans,
+  settings). Markdown is never picked out of Bash output; no document is picked up by the watched
+  folders. A `.log` is queued only if its first 200 kB say REFMAC or phenix.refine.
 - Any tool but Read: images returned *inside* the result (`{"type":"image","source":{…base64…}}` or
   MCP's `{"type":"image","mimeType","data"}`, e.g. Claude-in-Chrome screenshots) are decoded to
   `~/.claude/imgwatch/inline/<tool>_<HHMMSS>_<hash>.<ext>` and queued (max 10 per call). Read is
-  skipped because its image result is the file it already queued.
+  skipped because its image result is the file it already queued. `IMGWATCH_INLINE=off` turns this
+  off; `IMGWATCH_INLINE_SKIP_TOOLS` (substrings of tool names) and `IMGWATCH_INLINE_SKIP_SITES` (hosts,
+  comma-separated; `example.com` covers its subdomains, globs work) skip some. The site is the
+  Chrome tab the action ran on, read from the tool result's tab list.
 - Bash and `mcp__*` tools: scans the tool input and response text for media extensions; each hit
   is grown leftwards to the longest string that is an existing file, so paths with spaces work
   (OneDrive). Queued only if modified in the last 3 minutes and not under `~/.claude/imgwatch`.
@@ -191,7 +212,9 @@ claude (iTerm2 pane)                               imgwatch pane (right, ~1/3 wi
 - If `~/.claude/imgwatch/annotations/<session id>.jsonl` exists, moves it aside (so each record is
   delivered once) and prints a summary that Claude Code adds to the prompt as context: the image path,
   the marked-up copy, each mark (box corners or point, in image pixels) with its note, and the overall
-  note. Nothing pending → prints nothing. `python -S`, always exits 0.
+  note; for picked atoms: label, CID, PyMOL selection, xyz, note, and the view snapshot. Records older
+  than `IMGWATCH_MARK_MAX_MIN` (30) minutes get one summary line with their age instead.
+  Nothing pending → prints nothing. `python -S`, always exits 0.
 
 ### 5. `bin/imgwatch` → `bin/imgwatch.py`
 `bin/imgwatch` is a 3-line launcher: sources the config (with `set -a`, so the values are exported)
@@ -331,21 +354,24 @@ OSC 8 hyperlinks, so cmd-click opens the file in its default app or the folder i
 | `--cache-days` / `--cache-mb` | 7 / 500 | cache pruning at start (also `inline/`, `annotations/`) |
 | `--no-replace` | off | always append, never replace the last item in place |
 | `--max-seqs N` | 300 | alignment rows drawn |
-| `--pin PATH` / `--unpin` / `--annotate [PATH]` | | from inside a Claude session: control that session's pane |
+| `--pin PATH` / `--unpin` / `--annotate [PATH]` / `--compare [A B]` | | from inside a Claude session: control that session's pane |
+| `--no-reload` | off | don't restart in place when `imgwatch.py` changes |
 | `-V/--version` | | print commit + date (also in the banner) |
 | `--doctor` | | check the installation (below) |
 
 ### `imgwatch --doctor`
 Checks, each reported ok / warn / FAIL (exit 1 on any FAIL): config and interpreter; iTerm2
 version (3.7+ for browser panes) and imgcat; Python modules (`iterm2`, `selenium`, `watchdog`,
-Pillow); ffmpeg; Chrome; Mol* cache; iTerm2 Python API enabled; the browser profile exists and
+Pillow); ffmpeg; MAFFT or Clustal Omega (optional, aligning); Chrome; Mol* cache; iTerm2 Python API enabled; the browser profile exists and
 is Browser-type; all three hooks are in `settings.json`, executable, and are this repo's copies;
 `~/bin` links point here; the enqueue hook's extension list matches what imgwatch handles; and
 it starts a throwaway watcher to prove the autostart hook's `pgrep` pattern matches it.
 
 ### Config (`~/.config/imgwatch/config`, see `config.example`)
 `IMGWATCH_PYTHON`, `IMGWATCH_BROWSER_PROFILE` (default `imgbrowser`; empty = no browser lane),
-`IMGPANE_WIDTH`, optionally `IMGWATCH_MOLSTAR_VERSION` and `IMGWATCH_PYMOL`. These have to live here: env vars in `~/.zshrc` do **not** reach the pane,
+`IMGPANE_WIDTH`, optionally `IMGWATCH_MOLSTAR_VERSION`, `IMGWATCH_PYMOL`, `IMGWATCH_URLMAP`,
+`IMGWATCH_INLINE` / `IMGWATCH_INLINE_SKIP_SITES` / `IMGWATCH_INLINE_SKIP_TOOLS` (screenshots in tool
+results), `IMGWATCH_DOCS_ON_READ` (documents on Read) and `IMGWATCH_MARK_MAX_MIN` (when marks count as old). These have to live here: env vars in `~/.zshrc` do **not** reach the pane,
 which runs imgwatch without a login shell.
 
 ### Runtime state (`~/.claude/imgwatch/`)
@@ -353,7 +379,7 @@ which runs imgwatch without a login shell.
 previews, Mol* / note / notebook / alignment pages, contact sheets; pruned at start; safe to delete),
 `vendor/` (Mol*, marked, mermaid), `inline/` (images pulled out of tool results), `annotations/`
 (marked-up copies, pending `<sid>.jsonl`, delivered `<sid>.sent-*.jsonl`), `control_<pid>` (pin/annotate
-commands in flight), `browser_session_<session id>` (id of that session's reusable browser pane; `browser_session` without `--session`).
+commands in flight), `reload_<pid>.json` (what a pane showed, for the instant after it restarts itself), `browser_session_<session id>` (id of that session's reusable browser pane; `browser_session` without `--session`).
 
 ### Other terminals (experimental, untested)
 The pane opener and image drawing have branches for **WezTerm** (iTerm2 image protocol written
@@ -373,10 +399,15 @@ sheet), SVG, a 3-page PDF, HTML, a PDB (Mol* page with the data embedded), an mp
 a SMILES list, 2D and 3D SDFs, a PyMOL session and a PowerPoint deck, a Markdown note, a notebook,
 FASTA/A3M/Clustal alignments and a single long sequence, a file shown twice (replaced in place), pin and
 mark-up through the control channel (page, image, wrong token, POST → marked PNG + record → prompt hook
-output, delivered once), plus queue lines for its own and another session; inline images in tool results; the hook is fed Bash/MCP/Grep events (paths with spaces, stale files, its own
+output, delivered once), an unaligned FASTA (aligned by a stand-in `mafft`), CSV, JSON, REFMAC and
+phenix.refine logs (and a non-refinement log, ignored), ←/→ history, the compare page, atom picking on a
+PDB (page, POST, prompt-hook output with CID / PyMOL selection / xyz), old marks summarised by age, plus
+queue lines for its own and another session; a second watcher run from a copy of `imgwatch.py` restarts
+itself in place when the copy changes and refuses a copy that doesn't compile; screenshot privacy
+settings and the document/log rules in the enqueue hook; inline images in tool results; the hook is fed Bash/MCP/Grep events (paths with spaces, stale files, its own
 cache); an old `Read|Write` hook is widened by `install.sh`. Missing optional pieces (ffmpeg,
 Pillow, RDKit, PyMOL, python-pptx, network for Mol*) are reported as SKIP. Last run on the
-reference Mac: 36 passed (v0.0.5); boxy (macOS 27, Homebrew 3.12 venv): 63 passed (unreleased, 2026-11-14).
+reference Mac: 36 passed (v0.0.5); boxy (macOS 27, Homebrew 3.12 venv): 82 passed (unreleased, 2026-11-15).
 
 ## Test checklist (in a real pane)
 1. Start `claude` in iTerm2: a right pane titled imgwatch opens and focus stays on the left.
@@ -397,6 +428,12 @@ reference Mac: 36 passed (v0.0.5); boxy (macOS 27, Homebrew 3.12 venv): 63 passe
    Claude a message ("fix what I marked"): Claude gets the marked-up copy and coordinates.
 10. Ask Claude to write a Markdown note with a table and a mermaid block, read a notebook, and read a
     FASTA alignment; ask it to take a Chrome screenshot (inline image shows).
+11. Ask Claude to open a `.pdb`, press `a`, click two atoms, note one, Send, then message Claude: it names
+    the exact atoms (chain/residue/atom, CID).
+12. Press `←` a few times (earlier items, one at a time), `→` back to live; `c` then paste into Notes;
+    `o` opens Preview. Pin a figure, have Claude change it, press `b`: slider / blink / difference.
+13. Ask Claude to run REFMAC (or Read a refinement log): R/Rfree chart. Ask it to write a CSV and a JSON.
+14. `git pull` (or touch `bin/imgwatch.py`): the pane says it's restarting and comes back with the same items.
 
 ## Uninstall
 Remove the three hook entries from `~/.claude/settings.json`, delete the six symlinks,

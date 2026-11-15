@@ -102,6 +102,55 @@ except ImportError:
     pass
 PY
 command -v ffmpeg >/dev/null && ffmpeg -v error -f lavfi -i testsrc=duration=2:size=160x120:rate=10 -pix_fmt yuv420p "$T/fix/clip.mp4"
+# documents, logs, an unaligned FASTA, and a stand-in `mafft` (pads with gaps) so aligning is testable
+"$py" - "$T/fix" <<'PY'
+import sys; d = sys.argv[1]
+open(f"{d}/hits.csv", "w").write("compound,IC50_nM,ligand efficiency\nA-1,12.5,0.41\nA-2,3,0.44\nA-10,250,0.30\n")
+open(f"{d}/cfg.json", "w").write('{"model": {"chains": ["A", "B"], "res": 1.7}, "note": "</script> safe"}')
+open(f"{d}/unal.fasta", "w").write(">long\nMKTAYIAKQRQISFVKSHFSRQ\n>short\nMKTAYIAKQR\n")
+open(f"{d}/refine.log", "w").write("""
+ ###############################################################
+ ### CCP4 9.0: Refmac_5.8.0425  version 5.8.0425 : 13/07/24###
+ $TABLE: Rfactor analysis, stats vs cycle  :
+$GRAPHS:<Rfactor> vs cycle :N:1,2,3:
+$$
+    Ncyc    Rfact    Rfree     FOM      -LL     -LLfree  rmsBOND  zBOND rmsANGL  zANGL rmsCHIRAL $$
+$$
+       0   0.2222   0.2346   0.671      392212.   20818.5   0.0241  2.176   2.307  1.325   0.138
+       1   0.2223   0.2345   0.662      392497.   20825.8   0.0118  0.980   2.015  1.104   0.103
+       2   0.2219   0.2343   0.646      392656.   20850.7   0.0103  0.829   1.892  1.014   0.097
+ $$
+ $TEXT:Result: $$ Final results $$
+                      Initial    Final
+           R factor    0.2222   0.2219
+             R free    0.2346   0.2343
+     Rms BondLength    0.0241   0.0103
+      Rms BondAngle    2.3070   1.8920
+""")
+open(f"{d}/phenix.log", "w").write("""phenix.refine: macromolecular structure refinement
+Start R-work = 0.2532, R-free = 0.2803
+ stage                r-work r-free bonds angles b_min b_max b_ave n_water shift
+     0     :          0.2532 0.2803 0.010  1.172   5.0  80.3  24.1    0  0.000
+   1_bss   :          0.2481 0.2765 0.010  1.172   5.0  80.3  24.1    0  0.000
+   1_xyz   :          0.2301 0.2611 0.008  1.010   5.0  80.3  24.1    0  0.120
+   end     :          0.1910 0.2246 0.007  0.950   5.0  80.3  24.1    0  0.050
+Final R-work = 0.1910, R-free = 0.2246
+""")
+open(f"{d}/build.log", "w").write("make: all done\n")
+PY
+mkdir -p "$T/stub"
+cat > "$T/stub/mafft" <<STUB
+#!$py
+import sys
+seqs, name = [], None
+for line in open(sys.argv[-1]):
+    line = line.strip()
+    if line.startswith(">"): seqs.append([line[1:], ""])
+    elif seqs: seqs[-1][1] += line
+L = max(len(s) for _, s in seqs)
+for n, s in seqs: print(">" + n); print(s + "-" * (L - len(s)))
+STUB
+chmod +x "$T/stub/mafft"
 
 # ------------------------------------------------------------------ static checks
 echo "static"
@@ -187,6 +236,18 @@ TERM_PROGRAM=iTerm.app "$repo/bin/imgwatch" --no-poll --cache-mb 5 > /dev/null 2
 check "cache: files older than --cache-days removed" "[ ! -e '$c/old1.png' ] && [ ! -e '$c/old2.png' ]"
 check "cache: oldest removed to fit --cache-mb" "[ ! -e '$c/new1.png' ] && [ -e '$c/new3.png' ]"
 check "queue: trimmed to its tail on a line boundary" "[ \$(wc -c < '$q') -lt 70000 ] && head -1 '$q' | grep -q \$'^X\t/q/'"
+rm -f "$q"
+shot() { "$py" -c 'import json,base64; d=base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode(); print(json.dumps({"session_id":"S","tool_name":"mcp__claude-in-chrome__computer","tool_input":{"action":"screenshot"},"tool_response":[{"type":"text","text":"ok\nTab Context:\n- Executed on tabId: 2\n- Available tabs:\n  \u2022 tabId 1: \"Bank\" (\"https://secure.chase.com/\")\n  \u2022 tabId 2: \"PDB\" (\"https://www.rcsb.org/structure/8FD9\")"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":d}}]}))'; }
+shot | IMGWATCH_INLINE=off hook; shot | IMGWATCH_INLINE_SKIP_SITES=rcsb.org hook; shot | IMGWATCH_INLINE_SKIP_TOOLS=chrome hook
+check "hook: inline images off / skipped by site (subdomains too) / by tool" "[ ! -s '$q' ]"
+shot | IMGWATCH_INLINE_SKIP_SITES=chase.com hook
+check "hook: a skip-listed site in another tab doesn't hide this tab's screenshot" "[ \$(grep -c inline '$q') -eq 1 ]"
+rm -f "$q"
+rd() { printf '{"session_id":"S","tool_name":"%s","tool_input":{"file_path":"%s"}}' "$1" "$2" | hook; }
+rd Read "$T/fix/notes.md"; rd Read "$T/fix/hits.csv"; rd Read "$T/fix/build.log"
+check "hook: documents not shown on Read, plain logs never" "[ ! -s '$q' ]"
+rd Write "$T/fix/hits.csv"; rd Read "$T/fix/refine.log"; printf '{"session_id":"S","tool_name":"Read","tool_input":{"file_path":"%s"}}' "$T/fix/notes.md" | IMGWATCH_DOCS_ON_READ=1 hook
+check "hook: CSV on Write, REFMAC log on Read, Markdown on Read with IMGWATCH_DOCS_ON_READ=1" "grep -q hits.csv '$q' && grep -q refine.log '$q' && grep -q notes.md '$q'"
 rm -f "$c"/new*.png; : > "$q"
 
 # ------------------------------------------------------------------ rendering
@@ -194,7 +255,7 @@ echo "rendering (headless watcher, link mode)"
 cd "$T/watch"
 sleep 600 & OWN=$!   # stands in for the Claude CLI (--owner): the control channel is keyed on it
 IMGWATCH_URLMAP="$T/watch/served.html=http://127.0.0.1:9/dash/;$T/watch/site=http://127.0.0.1:9/" \
-IMGWATCH_NO_OPEN=1 TERM_PROGRAM=iTerm.app COLUMNS=100 "$repo/bin/imgwatch" --session S1 --owner $OWN --html-mode link "$T/watch" > "$T/watch.log" 2>&1 & W=$!
+PATH="$T/stub:$PATH" IMGWATCH_NO_OPEN=1 TERM_PROGRAM=iTerm.app COLUMNS=100 "$repo/bin/imgwatch" --session S1 --owner $OWN --html-mode link "$T/watch" > "$T/watch.log" 2>&1 & W=$!
 check "watcher starts with a banner" "waitfor '+ hook queue' 5"
 cp "$T/fix/single.png" "$T/watch/"
 check "PNG: header with clickable name" "waitfor '${E}]8;;file://localhost$T/watch/single.png' 8"
@@ -260,13 +321,13 @@ if waitfor 'notebook → page' 8 && sleep 1 && ls "$c"/nb1_*nb.ipynb.html >/dev/
   check "notebook: code, text/plain, PNG output and ANSI-free traceback" "grep -q 'array(\[0, 1\])' '$pg' && grep -q 'data:image/png;base64' '$pg' && grep -q 'BoomError' '$pg' && ! grep -q \$'\x1b' '$pg'"
 else log | grep -q 'cannot fetch marked' && skp "notebook (marked.js not cached and no network)" || bad "notebook: no page"; fi
 sq "$T/fix/kin.fasta"
-check "alignment (FASTA): columns, identity, conservation row" "waitfor '3 sequences × 17 columns' 8 && sleep 1 && grep -q conservation \$(ls '$c'/aln3_*kin.fasta.html | head -1)"
+check "alignment (FASTA): columns, identity, conservation row" "waitfor '3 sequences × 17 columns' 8 && sleep 1 && grep -q conservation \$(ls '$c'/aln4_*kin.fasta.html | head -1)"
 sq "$T/fix/hits.a3m"
 check "alignment (A3M): lowercase insertions dropped" "waitfor '3 sequences × 10 columns' 8"
 sq "$T/fix/pair.aln"
 check "alignment (Clustal): parsed, consensus line skipped" "waitfor '2 sequences × 10 columns, 90% mean identity' 8"
 sq "$T/fix/one.fa"
-check "single sequence: wrapped in numbered 60-residue lines" "waitfor '1 sequence, longest 140' 8 && sleep 1 && grep -q '>121 ' \$(ls '$c'/aln3_*one.fa.html | head -1)"
+check "single sequence: wrapped in numbered 60-residue lines" "waitfor '1 sequence, longest 140' 8 && sleep 1 && grep -q '>121 ' \$(ls '$c'/aln4_*one.fa.html | head -1)"
 cp "$T/fix/single.png" "$T/fix/again.png"; sq "$T/fix/again.png"; sleep 3; sq "$T/fix/again.png"
 check "same file twice in a row: replaced in place (↻2)" "waitfor '↻2 ' 8"
 printf 'pin\t%s\n' "$T/fix/single.png" >> "$HOME/.claude/imgwatch/control_$OWN"
@@ -284,12 +345,58 @@ if waitfor 'mark up single.png' 8; then
   printf '{"session_id":"S1","prompt":"again"}' | "$repo/hooks/imgwatch-annotations.sh" > "$T/ctx2.txt"
   check "prompt hook: marks reach Claude once (box, point, notes, marked copy)" "grep -q 'box x 10-50, y 12-42: label overlaps' '$T/ctx1.txt' && grep -q 'point (100, 80): (no note)' '$T/ctx1.txt' && grep -q 'Overall note: bigger font' '$T/ctx1.txt' && grep -q '_marked.png' '$T/ctx1.txt' && [ ! -s '$T/ctx2.txt' ]"
 else bad "mark-up: page not opened"; fi
+sq "$T/fix/unal.fasta"
+check "unaligned FASTA: aligned with mafft (stub), identity computed" "waitfor 'aligned here with mafft' 10 && log | grep -q '2 sequences × 22 columns'"
+sq "$T/fix/hits.csv"
+check "CSV: sortable table, numeric column detected" "waitfor 'table: 3 rows × 3 columns' 8 && sleep 0.5 && grep -q 'data-num=\"1\">IC50_nM' \$(ls '$c'/tab1_*hits.csv.html | head -1)"
+sq "$T/fix/cfg.json"
+check "JSON: tree page, </script> in a string can't break out" "waitfor 'JSON object, 2 keys' 8 && sleep 0.5 && grep -q '<\\\\/script> safe' \$(ls '$c'/json1_*cfg.json.html | head -1)"
+sq "$T/fix/refine.log"
+check "REFMAC log: cycles, R and Rfree first→last" "waitfor 'REFMAC5 · 2 cycles · Rfact 0.2222→0.2219, Rfree 0.2346→0.2343' 8"
+sq "$T/fix/phenix.log"
+check "phenix.refine log: stage table" "waitfor 'phenix.refine · 4 steps · Rwork 0.2532→0.1910, Rfree 0.2803→0.2246' 8"
+sq "$T/fix/build.log"; sleep 2
+check "a log that isn't from refinement is ignored" "! log | grep -qF 'build.log'"
+printf 'prev\t\n' >> "$HOME/.claude/imgwatch/control_$OWN"
+check "history: ← shows an earlier item on its own" "waitfor '◀ ' 6"
+for i in 1 2 3 4 5 6 7 8; do printf 'next\t\n' >> "$HOME/.claude/imgwatch/control_$OWN"; done; sleep 2
+check "history: → past the newest returns to live" "[ \$(log | grep -c '◀ ') -ge 1 ] && log | tail -40 | grep -q 'phenix.log'"
+printf 'compare\t%s\t%s\n' "$T/fix/burst_1.png" "$T/fix/burst_2.png" >> "$HOME/.claude/imgwatch/control_$OWN"
+if waitfor 'compare burst_1.png → burst_2.png' 8; then
+  curl_c=$(log | grep -ao 'http://127.0.0.1:[0-9]*/[A-Za-z0-9_-]*/c/[0-9]*' | tail -1); imgb=${curl_c/\/c\//\/imgb\/}
+  check "compare page: slider/blink/side/difference, both images served" "curl -sf '$curl_c' | grep -q 'Difference' && curl -sf '$imgb' | head -c 8 | LC_ALL=C grep -aq PNG"
+else bad "compare: page not opened"; fi
+printf 'annotate\t%s\n' "$T/fix/tiny.pdb" >> "$HOME/.claude/imgwatch/control_$OWN"
+if waitfor 'pick atoms in tiny.pdb' 8; then
+  surl=$(log | grep -ao 'http://127.0.0.1:[0-9]*/[A-Za-z0-9_-]*/s/[0-9]*' | tail -1)
+  if curl -sf "$surl" > "$T/pick.html"; then
+    check "structure mark-up: Mol* page with the atom-picking panel" "grep -q 'setupPick' '$T/pick.html' && grep -q 'THR A   1' '$T/pick.html'"
+    curl -sf -X POST -H 'Content-Type: application/json' --data '{"kind":"atoms","atoms":[{"chain":"A","resn":"THR","resi":1,"ins":"","atom":"CA","alt":"","element":"C","x":16.967,"y":12.784,"z":4.338,"b":10.8,"model":1,"note":"why here?"}],"note":"","shot":""}' "$surl" > "$T/postatoms.json"
+    printf '{"session_id":"S1","prompt":"look"}' | "$repo/hooks/imgwatch-annotations.sh" > "$T/ctx3.txt"
+    check "picked atoms reach Claude: label, CID, PyMOL selection, xyz, note" "grep -q '\"ok\": *true' '$T/postatoms.json' && waitfor '1 atom picked' 6 && grep -qF 'A/THR 1/CA  [CID //A/1/CA | PyMOL chain A and resi 1 and name CA | xyz (16.967, 12.784, 4.338)]: why here?' '$T/ctx3.txt'"
+  else log | grep -q 'cannot fetch Mol' && skp "atom picking (Mol* not cached and no network)" || bad "atom picking: page not served"; fi
+else bad "structure mark-up: picking page not opened"; fi
+"$py" -c 'import json,time,sys; print(json.dumps({"orig":"/x/old.png","src":"/x/old.png","size":[10,10],"marks":[{"kind":"point","x":1,"y":2,"note":""}],"note":"","marked":"/x/old_marked.png","time":"20200101-000000","epoch":time.time()-7200}))' > "$HOME/.claude/imgwatch/annotations/S1.jsonl"
+printf '{"session_id":"S1","prompt":"new topic"}' | "$repo/hooks/imgwatch-annotations.sh" > "$T/ctx4.txt"
+check "prompt hook: marks older than 30 min listed in one line with their age, not attached" "grep -q 'older mark-up, probably made for an earlier message' '$T/ctx4.txt' && grep -q '2.0 h ago' '$T/ctx4.txt' && ! grep -q 'point (1, 2)' '$T/ctx4.txt'"
 printf 'S1\t%s\n' "$T/fix/single.png" >> "$q"; printf 'OTHER\t%s\n' "$T/fix/burst_0.png" >> "$q"
 sleep 3
 check "queue: own session's file shown again" "[ \$(log | grep -c 'single.png') -ge 2 ]"
 check "queue: other session's file ignored" "! log | grep -qF '$T/fix/burst_0.png'"
 check "no Python traceback in the log" "! log | grep -q Traceback"
 kill $W $OWN 2>/dev/null; W=
+
+echo "self-reload"
+mkdir -p "$T/rb"; cp "$repo/bin/imgwatch.py" "$T/rb/"
+sleep 600 & OWN2=$!
+IMGWATCH_NO_OPEN=1 TERM_PROGRAM=iTerm.app COLUMNS=100 "$py" "$T/rb/imgwatch.py" --session S2 --owner $OWN2 --html-mode link --no-poll > "$T/watch.log" 2>&1 & W=$!
+check "second watcher starts" "waitfor '+ hook queue' 5"
+printf 'S2\t%s\n' "$T/fix/single.png" >> "$q"; waitfor 'single.png' 6
+printf '\n# changed\n' >> "$T/rb/imgwatch.py"
+check "imgwatch.py changed: restarts in place (same pid), shows what it showed" "waitfor 'restarting with the new version' 8 && waitfor 'reloaded: now' 8 && kill -0 $W && [ \$(log | grep -c 'single.png') -ge 2 ]"
+printf '\ndef broken(:\n' >> "$T/rb/imgwatch.py"
+check "a version that doesn't compile is reported, the old one keeps running" "waitfor \"doesn't compile\" 8 && sleep 1 && kill -0 $W"
+kill $W $OWN2 2>/dev/null; W=
 
 printf '\n%d passed, %d failed, %d skipped\n' $pass $fail $skip
 [ $fail -eq 0 ]

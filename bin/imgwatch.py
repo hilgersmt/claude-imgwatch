@@ -11,7 +11,8 @@ Shows stills inline, videos as animated-GIF previews, PDFs as their first page, 
 iTerm2 browser pane (or as a headless screenshot / link), structures (.pdb/.cif/.bcif/.sdf/.mol2)
 in a Mol* viewer, and Markdown notes, notebooks and sequence alignments as generated pages.
 Bursts of stills become one contact sheet; a file shown again right after itself replaces its entry.
-Keys in the pane: p pin/unpin, a mark up (marks reach Claude with the next prompt), r redraw.
+Keys in the pane: ←/→ browse, p pin, a mark up (structures: pick atoms; reaches Claude with the next
+prompt), b before/after, c copy, o open, r redraw, ? help. Restarts itself when imgwatch.py changes.
 
 Run it in a split pane; `imgpane` opens the split for you.  `imgwatch --doctor` checks the setup.
 """
@@ -48,16 +49,20 @@ SMILES_EXTS = {".smi", ".smiles"}
 PSE_EXTS = {".pse"}  # PyMOL sessions: ray-traced snapshot via headless PyMOL
 # Office/iWork: Quick Look renders the first slide/page natively
 OFFICE_EXTS = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".key", ".pages", ".numbers"}
-# Generated pages (HTML lanes): Markdown notes, Jupyter notebooks, sequence alignments.
-# Markdown arrives only through the hook (Write/Edit, never under ~/.claude); the folder watcher
-# ignores it, or every README touched in the working dir would pop up.
+# Generated pages (HTML lanes): Markdown notes, notebooks, alignments, tables, JSON, refinement logs.
+# Markdown, tables and JSON arrive only through the hook (Write/Edit, Bash output for tables/JSON;
+# never under ~/.claude); the folder watcher ignores them, or every README, data file and config
+# touched in the working dir would pop up. Logs too, and only REFMAC / phenix.refine ones are shown.
 NOTE_EXTS = {".md", ".markdown"}
 NB_EXTS = {".ipynb"}
 ALN_EXTS = {".fasta", ".fa", ".faa", ".fas", ".aln", ".clustal", ".a3m", ".sto", ".stk"}
-PAGE_EXTS = HTML_EXTS | STRUCT_EXTS | NOTE_EXTS | NB_EXTS | ALN_EXTS
+TABLE_EXTS = {".csv", ".tsv"}
+JSON_EXTS = {".json"}
+LOG_EXTS = {".log"}
+PAGE_EXTS = HTML_EXTS | STRUCT_EXTS | NOTE_EXTS | NB_EXTS | ALN_EXTS | TABLE_EXTS | JSON_EXTS | LOG_EXTS
 EXTS = (STILL_EXTS | VIDEO_EXTS | HTML_EXTS | PDF_EXTS | STRUCT_EXTS | SMILES_EXTS | PSE_EXTS | OFFICE_EXTS
-        | NOTE_EXTS | NB_EXTS | ALN_EXTS)
-WATCH_EXTS = EXTS - NOTE_EXTS
+        | NOTE_EXTS | NB_EXTS | ALN_EXTS | TABLE_EXTS | JSON_EXTS | LOG_EXTS)
+WATCH_EXTS = EXTS - NOTE_EXTS - TABLE_EXTS - JSON_EXTS - LOG_EXTS
 INLINE = STATE / "inline"            # images the hook pulled out of tool results
 ANNOT = STATE / "annotations"        # marks made in the annotate page, waiting for the next prompt
 MARKED_VERSION = "12.0.2"
@@ -108,6 +113,10 @@ ap.add_argument("--pin", metavar="PATH", help="(from a Claude session) pin PATH 
 ap.add_argument("--unpin", action="store_true", help="(from a Claude session) release the pin")
 ap.add_argument("--annotate", nargs="?", const="", metavar="PATH",
                 help="(from a Claude session) open PATH, or the latest image, for marking up")
+ap.add_argument("--no-reload", action="store_true",
+                help="don't restart in place when imgwatch.py changes on disk (git pull, an edit)")
+ap.add_argument("--compare", nargs="*", metavar="PATH",
+                help="(from a Claude session) before/after page: two images, or none for pinned/previous vs newest")
 ap.add_argument("-V", "--version", action="store_true", help="print the version and exit")
 ap.add_argument("--doctor", action="store_true", help="check the installation and exit")
 a = ap.parse_args()
@@ -284,12 +293,13 @@ def prune():
                 f.unlink()
         except OSError:
             pass
-    for f in STATE.glob("browser_session_*"):
-        try:
-            if now - f.stat().st_mtime > 86400:
-                f.unlink()
-        except OSError:
-            pass
+    for pat in ("browser_session_*", "reload_*.json"):
+        for f in STATE.glob(pat):
+            try:
+                if now - f.stat().st_mtime > 86400:
+                    f.unlink()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------- doctor
@@ -345,6 +355,9 @@ def doctor():
             out("warn", f"module {mod} missing ({why} off)")
     # tools
     out("ok" if shutil.which(FFMPEG) or os.path.exists(FFMPEG) else "warn", f"ffmpeg ({FFMPEG}) for video")
+    al = find_aligner()
+    out("ok" if al else "warn", f"{al[0]} ({al[1]}) aligns unaligned FASTA" if al else
+        "no MAFFT / Clustal Omega: unaligned FASTA is listed, not aligned (optional: brew install mafft)")
     out("ok" if Path("/Applications/Google Chrome.app").exists() else "warn", "Google Chrome for the screenshot lane")
     mjs = VENDOR / f"molstar-{MOLSTAR_VERSION}.js"
     out("ok" if mjs.exists() else "warn", f"Mol* {MOLSTAR_VERSION} " + ("cached" if mjs.exists() else "not cached yet (fetched on first structure)"))
@@ -765,15 +778,64 @@ def molstar_assets():
     return got
 
 
-def structure_html(p):
-    """Self-contained Mol* page with the structure embedded (no file:// fetches needed)."""
+# Atom picking (mark up a structure): a panel over the Mol* page. A click on an atom adds it, with
+# chain / residue / atom / altloc / xyz / B read through Mol*'s StructureProperties (not parsed from
+# a display label); Send posts them, plus a snapshot of the view, to the annotate server.
+PICK_CSS = """
+#pick{position:absolute;top:8px;right:8px;width:320px;max-height:calc(100% - 16px);overflow:auto;z-index:10;
+  background:#181818ee;border:1px solid #333;border-radius:8px;padding:10px;color:#ddd;font:13px -apple-system,sans-serif}
+#pick b{color:#fff}#pick .hint{color:#888;margin:4px 0 8px}#pick ol{padding-left:20px;margin:6px 0}#pick li{margin:6px 0}
+#pick .at{font:12px ui-monospace,Menlo,monospace;color:#ffd400}#pick .x{color:#888;cursor:pointer;float:right}
+#pick input,#pick textarea{width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #333;border-radius:4px;padding:4px 6px;font:inherit;margin-top:3px}
+#pick textarea{height:46px}#pick button{background:#2d6cdf;color:#fff;border:0;border-radius:5px;padding:5px 12px;font:inherit;cursor:pointer;margin:6px 6px 0 0}
+#pick button.alt{background:#333}#pick #pmsg{color:#7ee787;margin-top:6px}
+"""
+PICK_HTML = """<div id="pick"><b>Pick atoms</b> <span class="x" id="pmin">hide</span>
+<div class="hint">click atoms in the view (drag still rotates) · add a note per atom · Send · Claude gets them with your next message</div>
+<ol id="plist"></ol><textarea id="pnote" placeholder="Overall note (optional)"></textarea>
+<button id="psend">Send to Claude</button><button class="alt" id="pundo">Undo</button><button class="alt" id="pclear">Clear</button>
+<div id="pmsg"></div></div>"""
+PICK_JS = """
+function setupPick(v){
+  var S=molstar.lib.structure, SE=S.StructureElement, SP=S.StructureProperties, picks=[];
+  function list(){var ol=document.getElementById('plist');ol.innerHTML='';picks.forEach(function(a,i){
+    var li=document.createElement('li'),inp=document.createElement('input'),x=document.createElement('span');
+    li.innerHTML='<span class="at"></span>';li.firstChild.textContent=a.label;
+    x.className='x';x.textContent='✕';x.onclick=function(){picks.splice(i,1);list();};li.appendChild(x);
+    inp.placeholder='what about it?';inp.value=a.note||'';inp.oninput=function(){a.note=inp.value;};li.appendChild(inp);ol.appendChild(li);});}
+  v.plugin.behaviors.interaction.click.subscribe(function(e){
+    var l=e.current&&e.current.loci; if(!l||l.kind!=='element-loci') return;
+    var loc=SE.Loci.getFirstLocation(l); if(!loc) return;
+    var a={chain:SP.chain.auth_asym_id(loc), resn:SP.atom.auth_comp_id(loc), resi:SP.residue.auth_seq_id(loc),
+      ins:SP.residue.pdbx_PDB_ins_code(loc)||'', atom:SP.atom.auth_atom_id(loc), alt:SP.atom.label_alt_id(loc)||'',
+      element:SP.atom.type_symbol(loc), x:SP.atom.x(loc), y:SP.atom.y(loc), z:SP.atom.z(loc), b:SP.atom.B_iso_or_equiv(loc),
+      model:SP.unit.model_num(loc), note:''};
+    a.label=a.chain+'/'+a.resn+' '+a.resi+a.ins+'/'+a.atom+(a.alt?':'+a.alt:'');
+    var last=picks[picks.length-1]; if(last&&last.label===a.label) return;
+    picks.push(a);list();var ins=document.querySelectorAll('#plist input');if(ins.length)ins[ins.length-1].focus();});
+  document.getElementById('pundo').onclick=function(){picks.pop();list();};
+  document.getElementById('pclear').onclick=function(){picks=[];list();};
+  document.getElementById('pmin').onclick=function(){var p=document.getElementById('pick');var h=p.dataset.h!=='1';p.dataset.h=h?'1':'0';
+    Array.prototype.forEach.call(p.children,function(c){if(c.id!=='pmin'&&c.tagName!=='B')c.style.display=h?'none':'';});this.textContent=h?'show':'hide';};
+  document.getElementById('psend').onclick=function(){
+    var note=document.getElementById('pnote').value, msg=document.getElementById('pmsg');
+    if(!picks.length&&!note.trim()){msg.textContent='Nothing picked yet.';return;}
+    msg.textContent='Sending…';
+    Promise.resolve(v.plugin.helpers.viewportScreenshot.getImageDataUri()).catch(function(){return '';}).then(function(shot){
+      return fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({kind:'atoms',atoms:picks,note:note,shot:shot||''})});})
+    .then(function(r){return r.json();}).then(function(j){
+      if(j.ok){picks=[];document.getElementById('pnote').value='';list();}
+      msg.textContent=j.ok?'Saved and cleared. It goes to Claude with your next message.':'Failed: '+j.error;})
+    .catch(function(e){msg.textContent='Failed: '+e;});};
+}
+"""
+
+
+def molstar_page(p, pick=False):
+    """Self-contained Mol* page with the structure embedded (no file:// fetches needed);
+    pick=True adds the atom-picking panel (served by the annotate server, which takes its Send)."""
     ext = os.path.splitext(p)[1].lower()
-    key = cache_key(p, "molstar2", MOLSTAR_VERSION)
-    if not key:
-        return None
-    out = CACHE / (key + "_" + os.path.basename(p).replace(" ", "_") + ".html")
-    if out.exists():
-        return str(out)
     assets = molstar_assets()
     if not assets:
         return None
@@ -783,15 +845,29 @@ def structure_html(p):
         data = f'Uint8Array.from(atob("{base64.b64encode(raw).decode()}"), c => c.charCodeAt(0))'
     else:
         data = json.dumps(raw.decode(errors="replace"))
-    page = f"""<!doctype html><html><head><meta charset="utf-8"><title>{os.path.basename(p)}</title>
-<style>{css}</style><style>html,body{{margin:0;height:100%;background:#111}}#app{{position:absolute;inset:0}}</style>
-</head><body><div id="app"></div><script>{js}</script><script>
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(('Pick atoms: ' if pick else '') + os.path.basename(p))}</title>
+<style>{css}</style><style>html,body{{margin:0;height:100%;background:#111}}#app{{position:absolute;inset:0}}{PICK_CSS if pick else ''}</style>
+</head><body><div id="app"></div>{PICK_HTML if pick else ''}<script>{js}</script><script>{PICK_JS if pick else ''}
 molstar.Viewer.create('app', {{layoutIsExpanded: false, layoutShowControls: false, layoutShowSequence: true,
   layoutShowLog: false, layoutShowLeftPanel: false, viewportShowExpand: false, viewportShowSelectionMode: false,
   viewportShowAnimation: false, viewportBackgroundColor: '#111111'}}).then(function (v) {{
+  window.molstarViewer = v;{' setupPick(v);' if pick else ''}
   return v.loadStructureFromData({data}, {json.dumps(STRUCT_FORMATS[ext])}, {{dataLabel: {json.dumps(os.path.basename(p))}}});
 }});
 </script></body></html>"""
+
+
+def structure_html(p):
+    """The Mol* page for a structure, cached by path + mtime."""
+    key = cache_key(p, "molstar2", MOLSTAR_VERSION)
+    if not key:
+        return None
+    out = CACHE / (key + "_" + os.path.basename(p).replace(" ", "_") + ".html")
+    if out.exists():
+        return str(out)
+    page = molstar_page(p)
+    if page is None:
+        return None
     CACHE.mkdir(parents=True, exist_ok=True)
     out.write_text(page)
     return str(out)
@@ -1013,15 +1089,66 @@ table.aln{border-collapse:collapse;font:12px/1.3 ui-monospace,Menlo,monospace;wh
 """
 
 
+def find_aligner():
+    """(name, path) of MAFFT or Clustal Omega if installed (Homebrew dirs too: the pane's PATH may lack them)."""
+    for name in ("mafft", "clustalo"):
+        exe = shutil.which(name) or next((f"{d}/{name}" for d in ("/opt/homebrew/bin", "/usr/local/bin")
+                                          if os.access(f"{d}/{name}", os.X_OK)), None)
+        if exe:
+            return name, exe
+    return None
+
+
+def align(seqs, aligner):
+    """Align unaligned sequences (gaps stripped first); [(name, aligned seq)] or None.
+    Names go to the aligner as s0, s1, ... so odd characters in the originals can't upset it."""
+    name, exe = aligner
+    if len(seqs) > 500 or sum(len(s) for _, s in seqs) > 2_000_000:
+        warn(f"too many sequences to align here ({len(seqs)})"); return None
+    CACHE.mkdir(parents=True, exist_ok=True)
+    tmp = CACHE / f"align_{os.getpid()}.fa"
+    tmp.write_text("".join(f">s{i}\n{re.sub(r'[-.]', '', s)}\n" for i, (_, s) in enumerate(seqs)))
+    cmd = [exe, "--auto", "--quiet", "--preservecase", str(tmp)] if name == "mafft" else \
+          [exe, "-i", str(tmp), "--outfmt=fa", "--force"]
+    print(f"\033[2m  unaligned → aligning {len(seqs)} sequences with {name}…\033[0m", flush=True)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        warn(f"{name} failed: {e}"); return None
+    finally:
+        tmp.unlink(missing_ok=True)
+    got, cur = {}, None
+    for line in r.stdout.splitlines():
+        if line.startswith(">"):
+            cur = line[1:].strip(); got[cur] = []
+        elif cur is not None:
+            got[cur].append(line.strip())
+    res = [(nm, "".join(got.get(f"s{i}", []))) for i, (nm, _) in enumerate(seqs)]
+    if r.returncode or not all(s for _, s in res) or len({len(s) for _, s in res}) != 1:
+        warn(f"{name} gave no usable alignment" + (f": {r.stderr.strip()[:80]}" if r.stderr.strip() else "")); return None
+    return res
+
+
 def aln_html(p):
-    out = _page_out(p, f"aln3_{a.max_seqs}")
+    aligner = find_aligner()
+    out = _page_out(p, f"aln4_{a.max_seqs}_{aligner[0] if aligner else 'none'}")
     if out is None:
         return None, ""
+    sfile = Path(str(out) + ".summary")
+    if out.exists() and sfile.exists():   # a redraw: don't re-read (or re-align) the file
+        return str(out), sfile.read_text()
     seqs = read_alignment(p)
     if not seqs:
         return None, "no sequences found"
+    aligned = len(seqs) > 1 and len({len(s) for _, s in seqs}) == 1
+    how = ""
+    if len(seqs) > 1 and not aligned:
+        res = align(seqs, aligner) if aligner else None
+        if res:
+            seqs, aligned, how = res, True, f" · aligned here with {aligner[0]} (the file is unaligned)"
+        else:
+            how = " · unaligned (lengths differ)" + ("" if aligner else ": install mafft or clustalo to align them here")
     n, L = len(seqs), max(len(s) for _, s in seqs)
-    aligned = n > 1 and len({len(s) for _, s in seqs}) == 1
     nt = all(set(s.upper()) <= set("ACGTUN-") for _, s in seqs[:20])
     rows = seqs[:max(1, min(a.max_seqs, 400000 // max(L, 1)))]
     cons, ident = [], None
@@ -1037,7 +1164,7 @@ def aln_html(p):
             cons.append((top, k / min(n, 2000)))
     summary = f"{n} sequence{'s' if n != 1 else ''}" + (f" × {L} columns" if aligned else f", longest {L}") + \
               (f", {ident:.0f}% mean identity to the first" if ident is not None else "") + \
-              ("" if len(rows) == n else f", showing {len(rows)}")
+              ("" if len(rows) == n else f", showing {len(rows)}") + how
     if not out.exists():
         def row(seq, off=0):
             buf, prev, run = [], None, []
@@ -1081,6 +1208,298 @@ def aln_html(p):
                 f'<style>{PAGE_CSS}{ALN_CSS}main{{max-width:none}}</style></head><body><main>{"".join(body)}</main></body></html>')
         CACHE.mkdir(parents=True, exist_ok=True)
         out.write_text(page)
+    sfile.write_text(summary)
+    return str(out), summary
+
+
+# ---------------------------------------------------------------- tables, JSON, refinement logs
+def plain_page(title, body, css="", js=""):
+    return (f'<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title>'
+            f'<style>{PAGE_CSS}{css}</style></head><body><main>{body}</main>'
+            + (f"<script>{js}</script>" if js else "") + "</body></html>")
+
+
+TABLE_CSS = """
+main{max-width:none}.tools{margin:6px 0 10px}.tools input{background:#1b1b1b;color:#eee;border:1px solid #333;border-radius:4px;padding:4px 8px;font:inherit;width:min(360px,80vw)}
+.tw{overflow:auto;max-height:calc(100vh - 110px);border:1px solid #2a2a2a;border-radius:6px}
+table.t{display:table;margin:0;font:12.5px/1.35 ui-monospace,Menlo,monospace;border-collapse:separate;border-spacing:0}
+.t th{position:sticky;top:0;background:#1e1e1e;cursor:pointer;white-space:nowrap;z-index:1}.t th:hover{color:#fff}
+.t td,.t th{border:0;border-bottom:1px solid #262626;border-right:1px solid #262626;padding:3px 8px}
+.t td.num{text-align:right}.t tr:hover td{background:#1a2230}.t th .ar{color:#6cb6ff}.t td.rn{color:#666;text-align:right}
+"""
+TABLE_JS = """
+(function(){var t=document.querySelector('table.t'),tb=t.tBodies[0],rows=[].slice.call(tb.rows),dir={};
+t.tHead.rows[0].querySelectorAll('th').forEach(function(th,i){if(!i)return;th.onclick=function(){
+  var num=th.dataset.num==='1',d=dir[i]=-(dir[i]||-1);
+  rows.sort(function(a,b){var x=a.cells[i].textContent,y=b.cells[i].textContent;
+    if(num){x=parseFloat(x);y=parseFloat(y);x=isNaN(x)?-Infinity:x;y=isNaN(y)?-Infinity:y;return (x-y)*d;}
+    return x.localeCompare(y,undefined,{numeric:true})*d;});
+  rows.forEach(function(r){tb.appendChild(r);});
+  t.querySelectorAll('th .ar').forEach(function(s){s.textContent='';});th.querySelector('.ar').textContent=d>0?' ▲':' ▼';};});
+var f=document.getElementById('filter');f.oninput=function(){var q=f.value.toLowerCase();
+  rows.forEach(function(r){r.style.display=!q||r.textContent.toLowerCase().indexOf(q)>=0?'':'none';});};})();
+"""
+TABLE_MAX_ROWS = 5000
+
+
+def table_html(p):
+    """CSV/TSV as a sortable, filterable table (header = first row; numeric columns sort as numbers)."""
+    import csv
+    out = _page_out(p, "tab1")
+    if out is None:
+        return None, ""
+    sfile = Path(str(out) + ".summary")
+    if out.exists() and sfile.exists():
+        return str(out), sfile.read_text()
+    text = Path(p).read_text(errors="replace")
+    if os.path.splitext(p)[1].lower() == ".tsv":
+        dialect = "excel-tab"
+    else:
+        try:
+            dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+        except csv.Error:
+            dialect = "excel"
+    rows = list(csv.reader(text.splitlines(), dialect))
+    rows = [r for r in rows if any(c.strip() for c in r)]
+    if not rows:
+        return None, "empty table"
+    head, data = rows[0], rows[1:]
+    ncol = max(len(r) for r in rows)
+    head += [f"col{i + 1}" for i in range(len(head), ncol)]
+    shown = data[:TABLE_MAX_ROWS]
+
+    def isnum(x):
+        try:
+            float(x.replace(",", "") if x.count(",") and "." in x else x); return True
+        except ValueError:
+            return False
+    num = []
+    for j in range(ncol):
+        vals = [r[j].strip() for r in shown[:500] if j < len(r) and r[j].strip()]
+        num.append(bool(vals) and sum(isnum(v) for v in vals) >= 0.9 * len(vals))
+    summary = f"{len(data)} rows × {ncol} columns" + ("" if len(shown) == len(data) else f", showing the first {len(shown)}")
+    th = '<th>#</th>' + "".join(f'<th data-num="{int(num[j])}">{html.escape(h)}<span class="ar"></span></th>'
+                                for j, h in enumerate(head))
+    trs = []
+    for i, r in enumerate(shown, 1):
+        r = r + [""] * (ncol - len(r))
+        trs.append(f'<tr><td class="rn">{i}</td>' + "".join(
+            f'<td class="num">{html.escape(c)}</td>' if num[j] else f'<td>{html.escape(c)}</td>' for j, c in enumerate(r)) + "</tr>")
+    body = (f'<div class="meta">{html.escape(os.path.basename(p))} · {html.escape(summary)} · click a header to sort</div>'
+            f'<div class="tools"><input id="filter" placeholder="filter rows…"></div>'
+            f'<div class="tw"><table class="t"><thead><tr>{th}</tr></thead><tbody>{"".join(trs)}</tbody></table></div>')
+    CACHE.mkdir(parents=True, exist_ok=True)
+    out.write_text(plain_page(os.path.basename(p), body, TABLE_CSS, TABLE_JS))
+    sfile.write_text(summary)
+    return str(out), summary
+
+
+JSON_CSS = """
+.j{font:12.5px/1.5 ui-monospace,Menlo,monospace}.j details{margin-left:16px}.j summary{cursor:pointer;list-style:none}
+.j summary::-webkit-details-marker{display:none}.j summary:before{content:'▸ ';color:#666}.j details[open]>summary:before{content:'▾ '}
+.j .k{color:#9cdcfe}.j .s{color:#ce9178}.j .n{color:#b5cea8}.j .b{color:#569cd6}.j .z{color:#888}.j .c{color:#666}.j .leaf{margin-left:30px}
+.err{color:#ff7b72}
+"""
+JSON_JS = """
+(function(){var data=JSON.parse(document.getElementById('jd').textContent),root=document.getElementById('jroot');
+function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+function val(v){if(v===null)return '<span class="z">null</span>';if(typeof v==='string')return '<span class="s">"'+esc(v.length>2000?v.slice(0,2000)+'…':v)+'"</span>';
+  if(typeof v==='number')return '<span class="n">'+v+'</span>';if(typeof v==='boolean')return '<span class="b">'+v+'</span>';return '';}
+function node(k,v,depth){var key=k===null?'':'<span class="k">'+esc(k)+'</span>: ';
+  if(v===null||typeof v!=='object'){var d=document.createElement('div');d.className='leaf';d.innerHTML=key+val(v);return d;}
+  var arr=Array.isArray(v),ks=Object.keys(v),det=document.createElement('details'),sum=document.createElement('summary');
+  sum.innerHTML=key+(arr?'[':'{')+'<span class="c"> '+ks.length+(arr?' items':' keys')+' </span>'+(arr?']':'}');det.appendChild(sum);
+  var built=false;function build(){if(built)return;built=true;var lim=Math.min(ks.length,2000);
+    for(var i=0;i<lim;i++)det.appendChild(node(arr?'['+ks[i]+']':ks[i],v[ks[i]],depth+1));
+    if(ks.length>lim){var m=document.createElement('div');m.className='leaf c';m.textContent='… '+(ks.length-lim)+' more';det.appendChild(m);}}
+  det.addEventListener('toggle',function(){if(det.open)build();});if(depth<2){det.open=true;build();}return det;}
+root.appendChild(node(null,data,0));})();
+"""
+
+
+def json_html(p):
+    """JSON as a collapsible tree (two levels open; deeper levels built when opened)."""
+    out = _page_out(p, "json1")
+    if out is None:
+        return None, ""
+    sfile = Path(str(out) + ".summary")
+    if out.exists() and sfile.exists():
+        return str(out), sfile.read_text()
+    text = Path(p).read_text(errors="replace")
+    name = os.path.basename(p)
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        summary = f"not valid JSON: {e}"
+        body = (f'<div class="meta">{html.escape(name)}</div><p class="err">{html.escape(summary)}</p>'
+                f'<pre>{html.escape(text[:200000])}</pre>')
+        js = ""
+    else:
+        kind = (f"object, {len(data)} keys" if isinstance(data, dict) else
+                f"array, {len(data)} items" if isinstance(data, list) else type(data).__name__)
+        summary = f"JSON {kind}, {len(text) / 1e3:.1f} kB"
+        blob = json.dumps(data).replace("</", "<\\/")
+        body = (f'<div class="meta">{html.escape(name)} · {html.escape(summary)}</div>'
+                f'<script type="application/json" id="jd">{blob}</script><div class="j" id="jroot"></div>')
+        js = JSON_JS
+    CACHE.mkdir(parents=True, exist_ok=True)
+    out.write_text(plain_page(name, body, JSON_CSS, js))
+    sfile.write_text(summary)
+    return str(out), summary
+
+
+def is_refine_log(p):
+    try:
+        with open(p, "rb") as f:
+            head = f.read(200_000)
+    except OSError:
+        return False
+    return b"REFMAC" in head or b"Refmac" in head or b"phenix.refine" in head
+
+
+def parse_refine_log(p):
+    """{"program", "cols", "rows", "final", "running"} from a REFMAC5 or phenix.refine log.
+    REFMAC: the 'stats vs cycle' table (Ncyc Rfact Rfree FOM -LL -LLfree rmsBOND zBOND rmsANGL ...);
+    while it is still running, the per-cycle 'Overall R factor' / 'Free R factor' lines instead.
+    Phenix: the stage table (stage r-work r-free bonds angles ...), else every 'R-work = .., R-free = ..'."""
+    text = Path(p).read_text(errors="replace")
+    if "REFMAC" in text[:200_000] or "Refmac" in text[:200_000]:
+        res = {"program": "REFMAC5", "cols": [], "rows": [], "final": {}, "running": False}
+        i = text.find("$TABLE: Rfactor analysis, stats vs cycle")
+        if i >= 0:
+            lines = text[i:].splitlines()
+            hdr = next((k for k, l in enumerate(lines) if "Ncyc" in l and "Rfree" in l), None)
+            if hdr is not None:
+                res["cols"] = lines[hdr].replace("$$", "").split()
+                for l in lines[hdr + 1:]:
+                    if l.strip() == "$$" and res["rows"]:
+                        break
+                    f = l.split()
+                    if f and f[0].isdigit() and len(f) >= 3:
+                        try:
+                            res["rows"].append([float(x) for x in f[:len(res["cols"])]])
+                            res.setdefault("raw", []).append(f[:len(res["cols"])])
+                        except ValueError:
+                            break
+            m = re.search(r"R factor\s+([\d.]+)\s+([\d.]+)\s*\n\s*R free\s+([\d.]+)\s+([\d.]+)", text[i:])
+            if m:
+                res["final"] = {"R": (float(m.group(1)), float(m.group(2))), "Rfree": (float(m.group(3)), float(m.group(4)))}
+            for key, lab in (("bond", r"Rms BondLength"), ("angle", r"Rms BondAngle")):
+                m = re.search(lab + r"\s+([\d.]+)\s+([\d.]+)", text[i:])
+                if m:
+                    res["final"][key] = (float(m.group(1)), float(m.group(2)))
+        if not res["rows"]:   # still running: the cycles so far
+            rs = re.findall(r"Overall R factor\s*=\s*([\d.]+)\s*\n\s*Free R factor\s*=\s*([\d.]+)", text)
+            res["cols"] = ["Ncyc", "Rfact", "Rfree"]
+            res["rows"] = [[float(k), float(r), float(f)] for k, (r, f) in enumerate(rs)]
+            res["running"] = True
+        return res
+    if "phenix.refine" in text[:200_000]:
+        res = {"program": "phenix.refine", "cols": [], "rows": [], "final": {}, "running": False, "stages": []}
+        hdr = re.search(r"^\s*stage\s+r-work\s+r-free\s+bonds\s+angles.*$", text, re.M)
+        if hdr:
+            for l in text[hdr.end():].splitlines()[1:]:
+                m = re.match(r"^\s*(\S+)\s*:\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)", l)
+                if not m:
+                    if res["rows"]:
+                        break
+                    continue
+                res["stages"].append(m.group(1))
+                res["rows"].append([float(len(res["rows"])), float(m.group(2)), float(m.group(3)),
+                                    float(m.group(4)), float(m.group(5))])
+                res.setdefault("raw", []).append([str(len(res["rows"]) - 1), m.group(2), m.group(3), m.group(4), m.group(5)])
+            res["cols"] = ["step", "Rwork", "Rfree", "rmsBOND", "rmsANGL"]
+        if not res["rows"]:
+            pairs = re.findall(r"R-work\s*=\s*([\d.]+),\s*R-free\s*=\s*([\d.]+)", text)
+            dedup = [pr for k, pr in enumerate(pairs) if k == 0 or pr != pairs[k - 1]]
+            res["cols"] = ["step", "Rwork", "Rfree"]
+            res["rows"] = [[float(k), float(r), float(f)] for k, (r, f) in enumerate(dedup)]
+        st = re.search(r"Start R-work\s*=\s*([\d.]+),\s*R-free\s*=\s*([\d.]+)", text)
+        fi = re.search(r"Final R-work\s*=\s*([\d.]+),\s*R-free\s*=\s*([\d.]+)", text)
+        if st and fi:
+            res["final"] = {"R": (float(st.group(1)), float(fi.group(1))), "Rfree": (float(st.group(2)), float(fi.group(2)))}
+        res["running"] = not fi
+        return res
+    return None
+
+
+def r_chart(xs, series, w=640, h=260, fmt="{:.3f}", floor=None):
+    """Small inline SVG line chart: series = [(label, colour, values)] on one shared axis, x = cycle.
+    floor: the axis never goes below it (rms deviations can't be negative)."""
+    vals = [v for _, _, ys in series for v in ys]
+    if not xs or not vals:
+        return ""
+    lo, hi = min(vals), max(vals)
+    pad = max((hi - lo) * 0.15, abs(hi) * 0.02, 1e-4)
+    lo, hi = lo - pad, hi + pad
+    if floor is not None:
+        lo = max(lo, floor)
+    L, R, T, B = 52, 12, 14, 30
+    X = lambda x: L + (x - xs[0]) / max(xs[-1] - xs[0], 1) * (w - L - R)
+    Y = lambda y: T + (hi - y) / (hi - lo) * (h - T - B)
+    g = [f'<svg viewBox="0 0 {w} {h}" width="{w}" style="max-width:100%;background:#151515;border:1px solid #2a2a2a;border-radius:6px" '
+         f'font-family="-apple-system,sans-serif" font-size="11">']
+    for k in range(5):
+        y = lo + (hi - lo) * k / 4
+        g.append(f'<line x1="{L}" x2="{w - R}" y1="{Y(y):.1f}" y2="{Y(y):.1f}" stroke="#2a2a2a"/>'
+                 f'<text x="{L - 6}" y="{Y(y) + 4:.1f}" fill="#888" text-anchor="end">{fmt.format(y)}</text>')
+    step = max(1, round(len(xs) / 10))
+    for x in xs[::step]:
+        g.append(f'<text x="{X(x):.1f}" y="{h - 10}" fill="#888" text-anchor="middle">{x:g}</text>')
+    for k, (lab, col, ys) in enumerate(series):
+        pts = " ".join(f"{X(x):.1f},{Y(y):.1f}" for x, y in zip(xs, ys))
+        g.append(f'<polyline points="{pts}" fill="none" stroke="{col}" stroke-width="2"/>')
+        g += [f'<circle cx="{X(x):.1f}" cy="{Y(y):.1f}" r="2.5" fill="{col}"/>' for x, y in zip(xs, ys)]
+        g.append(f'<text x="{w - R - 4}" y="{T + 12 + 14 * k}" fill="{col}" text-anchor="end" font-weight="600">{lab}</text>')
+    g.append("</svg>")
+    return "".join(g)
+
+
+def refine_html(p):
+    """A REFMAC5 / phenix.refine log as R and Rfree per cycle (chart + table) and final statistics."""
+    out = _page_out(p, "ref2")
+    if out is None:
+        return None, ""
+    sfile = Path(str(out) + ".summary")
+    if out.exists() and sfile.exists():
+        return str(out), sfile.read_text()
+    res = parse_refine_log(p)
+    if not res or not res["rows"]:
+        return None, "no R-factor table found in this log"
+    cols, rows = res["cols"], res["rows"]
+    ir, ifree = 1, 2
+    xs = [r[0] for r in rows]
+    first, last = rows[0], rows[-1]
+    rname = cols[ir]
+    summary = (f"{res['program']} · {len(rows) - 1 if res['program'] == 'REFMAC5' and not res['running'] else len(rows)} "
+               f"{'cycles' if res['program'] == 'REFMAC5' else 'steps'} · {rname} {first[ir]:.4f}→{last[ir]:.4f}, "
+               f"Rfree {first[ifree]:.4f}→{last[ifree]:.4f} (gap {last[ifree] - last[ir]:.4f})"
+               + (" · still running" if res["running"] else ""))
+    chart = r_chart(xs, [(rname, "#6cb6ff", [r[ir] for r in rows]), ("Rfree", "#f0883e", [r[ifree] for r in rows])])
+    # bond (Å, ~0.01) and angle (°, ~1-2) deviations differ 100-fold: one small chart each
+    chart2 = "".join(
+        f'<div style="display:inline-block;margin:0 12px 8px 0">' + r_chart(
+            xs, [(lab, col, [r[cols.index(c)] for r in rows])], w=400, h=170, fmt=fm, floor=0) + "</div>"
+        for c, lab, col, fm in (("rmsBOND", "rms bond (Å)", "#7ee787", "{:.4f}"), ("rmsANGL", "rms angle (°)", "#d2a8ff", "{:.2f}"))
+        if c in cols)
+    fin = res["final"]
+    stats = []
+    for key, lab in (("R", rname), ("Rfree", "Rfree"), ("bond", "rms bond (Å)"), ("angle", "rms angle (°)")):
+        if key in fin:
+            stats.append(f"<tr><td>{lab}</td><td class='num'>{fin[key][0]:.4f}</td><td class='num'>{fin[key][1]:.4f}</td></tr>")
+    stages = res.get("stages") or []
+    th = "".join(f"<th>{html.escape(c)}</th>" for c in cols) + ("<th>stage</th>" if stages else "")
+    raw = res.get("raw") or [[f"{v:g}" for v in r] for r in rows]   # the log's own number text
+    trs = "".join("<tr>" + "".join(f"<td class='num'>{html.escape(v)}</td>" for v in raw[k]) +
+                  (f"<td>{html.escape(stages[k])}</td>" if stages else "") + "</tr>" for k in range(len(rows)))
+    body = (f'<div class="meta">{html.escape(os.path.basename(p))} · {html.escape(summary)}</div>'
+            f'<h2>R and Rfree per {"cycle" if res["program"] == "REFMAC5" else "step"}</h2>{chart}'
+            + (f"<h2>Geometry</h2>{chart2}" if chart2 else "")
+            + (f"<h2>Initial → final</h2><table class='t'><tr><th></th><th>initial</th><th>final</th></tr>{''.join(stats)}</table>" if stats else "")
+            + f"<h2>All {'cycles' if res['program'] == 'REFMAC5' else 'steps'}</h2><table class='t'><tr>{th}</tr>{trs}</table>")
+    CACHE.mkdir(parents=True, exist_ok=True)
+    out.write_text(plain_page(os.path.basename(p), body, ".t td.num{text-align:right;font:12.5px ui-monospace,Menlo,monospace}"))
+    sfile.write_text(summary)
     return str(out), summary
 
 
@@ -1322,7 +1741,8 @@ def show_html(p, orig=None):
 
 # ---------------------------------------------------------------- rendering
 seen = {}  # path -> mtime already shown (or present at start)
-history = deque(maxlen=max(a.keep, 8))  # (item, time shown) of recent items, redrawn on resize/replace
+history = deque(maxlen=max(a.keep, 50))  # (item, time shown) of recent items: redrawn on resize/replace, ←/→ browse them
+view = None       # index into history while browsing it with ←/→ (None = live: newest items as they come)
 resized_at = None  # set by SIGWINCH; inline images are sized when drawn, so redraw after a resize
 pinned = None      # (item, ts) kept at the top of the pane until unpinned
 stills = {}        # item -> the image file actually drawn for it (what the annotate page shows)
@@ -1365,6 +1785,7 @@ def show(paths):
     """Show a batch of new files: a burst of stills becomes one contact sheet. A file shown again
     right after itself (a figure being re-rendered, Write then Read) replaces its own entry."""
     paths = settle(list(dict.fromkeys(paths)))
+    paths = [p for p in paths if os.path.splitext(p)[1].lower() not in LOG_EXTS or is_refine_log(p)]
     stills_ = [p for p in paths if os.path.splitext(p)[1].lower() in STILL_EXTS]
     if a.burst and len(stills_) > a.burst:
         rest = [p for p in paths if p not in stills_]
@@ -1384,7 +1805,8 @@ def show(paths):
                 redraw()
             continue
         history.append((it, ts))
-        if pinned:
+        if pinned or view is not None:
+            globals()["view"] = None   # something new arrived: back to live
             redraw()
         else:
             render(it, ts)
@@ -1443,6 +1865,15 @@ def render(item, ts, load=True, head=True, mark=""):
         elif ext in ALN_EXTS:
             page, summary = aln_html(p)
             print(f"\033[2m  sequences: {summary}\033[0m", flush=True)
+        elif ext in TABLE_EXTS:
+            page, summary = table_html(p)
+            print(f"\033[2m  table: {summary}\033[0m", flush=True)
+        elif ext in JSON_EXTS:
+            page, summary = json_html(p)
+            print(f"\033[2m  {summary}\033[0m", flush=True)
+        elif ext in LOG_EXTS:
+            page, summary = refine_html(p)
+            print(f"\033[2m  {summary}\033[0m", flush=True)
         if ext not in HTML_EXTS and not page:
             print("  " + link(file_url(p), f"\033[4;36m{os.path.basename(p)}\033[0m"), flush=True); return
         pages[item] = page or p
@@ -1507,11 +1938,13 @@ def banner():
     watch = "FSEvents" if fsw else "polling"
     print(f"\033[1mimgwatch\033[0m {version()}  {watch}: {polling}  + hook queue   (Ctrl-C to stop)", flush=True)
     if KEYS:
-        print("\033[2m  keys in this pane: p pin/unpin latest · a mark up latest · r redraw · ? help\033[0m", flush=True)
+        print("\033[2m  keys: ←/→ browse · p pin · a mark up · b before/after · c copy · o open · r redraw · ? help\033[0m", flush=True)
 
 
 def redraw():
     global MAX_ROWS
+    if view is not None and view < len(history):   # browsing with ←/→: keep showing that item
+        return step(0)
     clear_all()
     banner()
     items = list(history)
@@ -1543,9 +1976,79 @@ def latest():
     return history[-1] if history else None
 
 
+def current():
+    """The item the keys act on: the one being browsed with ←/→, else the newest."""
+    if view is not None and 0 <= view < len(history):
+        return history[view]
+    return latest()
+
+
+def step(d):
+    """←/→: show one earlier/later item on its own; → past the newest returns to the live view."""
+    global view
+    if not history:
+        return
+    i = (len(history) - 1 if view is None else view) + d
+    if i >= len(history):
+        if view is not None:
+            view = None; redraw()
+        return
+    view = max(0, i)
+    clear_all()
+    banner()
+    print(f"\033[1;35m  ◀ {view + 1}/{len(history)} ▶\033[0;2m  ← older · → newer (past the newest: back to live)\033[0m", flush=True)
+    it, ts = history[view]
+    render(it, ts, load=True)
+
+
+def item_image(it):
+    """An image file standing for an item (what was drawn for it), or None for pages and the like."""
+    src = stills.get(it)
+    if src is None and len(it) == 1 and os.path.splitext(it[0])[1].lower() in STILL_EXTS and os.path.exists(it[0]):
+        src = it[0]
+    if src and os.path.splitext(src)[1].lower() in (".svg",):
+        src = ql_png(src)
+    elif src and os.path.splitext(src)[1].lower() in (".heic", ".heif", ".tif", ".tiff", ".bmp", ".webp"):
+        src = heic_jpg(src)   # sips -> jpeg, works for all of these
+    return src
+
+
+def copy_item(entry):
+    """c: the item's image onto the clipboard (paste into Slack, Keynote, Mail), else its path as text."""
+    if entry is None:
+        warn("nothing shown yet"); return
+    it = entry[0]
+    src = item_image(it)
+    if src and os.path.splitext(src)[1].lower() == ".gif":
+        src = None   # the clipboard would take only the first frame; copy the path instead
+    if src:
+        cls = "PNGf" if src.lower().endswith(".png") else "JPEG"
+        r = subprocess.run(["osascript", "-e", "on run argv",
+                            "-e", f"set the clipboard to (read (POSIX file (item 1 of argv)) as «class {cls}»)",
+                            "-e", "end run", src], capture_output=True, text=True)
+        if r.returncode == 0:
+            print(f"\033[2m  ⧉ image copied to the clipboard ({os.path.basename(it[0]) if len(it) == 1 else 'contact sheet'})\033[0m", flush=True)
+            return
+    text = "\n".join(it)
+    subprocess.run(["pbcopy"], input=text.encode())
+    print(f"\033[2m  ⧉ path copied to the clipboard: {text[:120]}\033[0m", flush=True)
+
+
+def open_item(entry):
+    """o: open the item's file(s) in their default app (images: Preview)."""
+    if entry is None:
+        warn("nothing shown yet"); return
+    files = [p for p in entry[0] if os.path.exists(p)]
+    if not files:
+        warn("file no longer exists"); return
+    print(f"\033[2m  ↗ opening {os.path.basename(files[0])}{f' + {len(files) - 1} more' if len(files) > 1 else ''}\033[0m", flush=True)
+    if not os.environ.get("IMGWATCH_NO_OPEN"):
+        subprocess.run(["open", *files], capture_output=True)
+
+
 def set_pin(entry):
-    global pinned
-    pinned = entry
+    global pinned, view
+    pinned, view = entry, None
     redraw()
 
 
@@ -1645,26 +2148,38 @@ def ann_server():
             return _ann["items"].get(m.group(1)) if m else None
 
         def do_GET(self):
+            it = self._item("s")
+            if it and it.get("struct"):
+                page = molstar_page(it["orig"], pick=True)
+                if page is None:
+                    return self._send(500, b"Mol* not available (offline?)", "text/plain")
+                return self._send(200, page.encode(), "text/html; charset=utf-8")
             it = self._item("a")
             if it:
                 img = f"/{ANN_TOKEN}/img/{it['id']}"
                 page = ANN_PAGE.replace("__NAME__", html.escape(it["name"])).replace("__IMG__", img)
                 return self._send(200, page.encode(), "text/html; charset=utf-8")
-            it = self._item("img")
-            if it:
-                ext = os.path.splitext(it["src"])[1].lower()
-                ct = {".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}.get(ext, "image/jpeg")
-                return self._send(200, Path(it["src"]).read_bytes(), ct)
+            it = self._item("c")
+            if it and it.get("src2"):
+                page = CMP_PAGE.replace("__A__", html.escape(it["name"])).replace("__B__", html.escape(it["name2"]))
+                page = page.replace("__IMGA__", f"/{ANN_TOKEN}/img/{it['id']}").replace("__IMGB__", f"/{ANN_TOKEN}/imgb/{it['id']}")
+                return self._send(200, page.encode(), "text/html; charset=utf-8")
+            for kind, key in (("img", "src"), ("imgb", "src2")):
+                it = self._item(kind)
+                if it and it.get(key):
+                    ext = os.path.splitext(it[key])[1].lower()
+                    ct = {".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}.get(ext, "image/jpeg")
+                    return self._send(200, Path(it[key]).read_bytes(), ct)
             self._send(404, b"not found", "text/plain")
 
         def do_POST(self):
-            it = self._item("a")
+            it = self._item("a") or self._item("s")
             if not it:
                 return self._send(404, b'{"ok":false,"error":"unknown page"}', "application/json")
             try:
                 n = int(self.headers.get("Content-Length", 0))
-                data = json.loads(self.rfile.read(min(n, 1_000_000)))
-                rec = save_annotation(it, data)
+                data = json.loads(self.rfile.read(min(n, 20_000_000)))   # atoms + a view snapshot
+                rec = save_atoms(it, data) if it.get("struct") else save_annotation(it, data)
                 _ann["done"].append(rec)
                 self._send(200, b'{"ok":true}', "application/json")
             except Exception as e:
@@ -1734,17 +2249,82 @@ def save_annotation(it, data):
     comp = ANNOT / f"{SID[:8]}_{stamp}_marked.png"
     im.save(comp)
     rec = {"orig": it["orig"], "src": it["src"], "size": [im.width, im.height], "marks": marks,
-           "note": str(data.get("note") or "")[:2000], "marked": str(comp), "time": stamp}
+           "note": str(data.get("note") or "")[:2000], "marked": str(comp), "time": stamp, "epoch": time.time()}
     with open(ANNOT / f"{SID}.jsonl", "a") as f:
         f.write(json.dumps(rec) + "\n")
     return rec
 
 
+def _num(v, nd=3):
+    try:
+        return round(float(v), nd)
+    except (TypeError, ValueError):
+        return None
+
+
+def save_atoms(it, data):
+    """Atoms picked on a structure: queue a record (labels, Coot/Moorhen CID, PyMOL selection, xyz)
+    for the UserPromptSubmit hook, with the view snapshot the page sent."""
+    clean = lambda v, n=8: re.sub(r"[^A-Za-z0-9_'\-+*]", "", str(v or ""))[:n]
+    atoms = []
+    for m in (data.get("atoms") or [])[:100]:
+        ch, resn, atom, alt, ins = clean(m.get("chain"), 4), clean(m.get("resn"), 5), clean(m.get("atom"), 6), \
+            clean(m.get("alt"), 2), clean(m.get("ins"), 2)
+        try:
+            resi = int(m.get("resi"))
+        except (TypeError, ValueError):
+            continue
+        xyz = [_num(m.get(k)) for k in ("x", "y", "z")]
+        atoms.append({
+            "label": f"{ch}/{resn} {resi}{ins}/{atom}" + (f":{alt}" if alt else ""),
+            "chain": ch, "resn": resn, "resi": resi, "ins": ins, "atom": atom, "alt": alt,
+            "element": clean(m.get("element"), 3), "b": _num(m.get("b"), 2), "model": m.get("model"),
+            # Coot/Moorhen short-form CID (what addColourRule and friends match), PyMOL selection
+            "cid": f"//{ch}/{resi}{'.' + ins if ins else ''}/{atom}" + (f":{alt}" if alt else ""),
+            "pymol": f"chain {ch} and resi {resi}{ins} and name {atom}" + (f" and alt {alt}" if alt else ""),
+            "xyz": "(%s)" % ", ".join("%.3f" % v if v is not None else "?" for v in xyz),
+            "note": str(m.get("note") or "")[:500]})
+    ANNOT.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    view_png = None
+    shot = str(data.get("shot") or "")
+    if shot.startswith("data:image/png;base64,"):
+        try:
+            view_png = ANNOT / f"{SID[:8]}_{stamp}_view.png"
+            view_png.write_bytes(base64.b64decode(shot.split(",", 1)[1]))
+        except (ValueError, OSError):
+            view_png = None
+    rec = {"kind": "atoms", "orig": it["orig"], "atoms": atoms, "note": str(data.get("note") or "")[:2000],
+           "marked": str(view_png) if view_png else "", "time": stamp, "epoch": time.time()}
+    with open(ANNOT / f"{SID}.jsonl", "a") as f:
+        f.write(json.dumps(rec) + "\n")
+    return rec
+
+
+def pick_atoms(it):
+    """Mark up a structure: its Mol* view with the atom-picking panel, served by the annotate server."""
+    if molstar_assets() is None:
+        warn("Mol* not available (offline?)"); return
+    port = ann_server()
+    _ann["n"] += 1
+    aid = str(_ann["n"])
+    _ann["items"][aid] = {"id": aid, "struct": True, "orig": it[0], "name": os.path.basename(it[0])}
+    url = f"http://127.0.0.1:{port}/{ANN_TOKEN}/s/{aid}"
+    print(f"\n\033[1;33m── ✎ pick atoms in {os.path.basename(it[0])}\033[0;2m  click atoms, add notes, Send · "
+          f"{link(url, 'open')}\033[0m", flush=True)
+    if not (html_mode() == "browser" and browser_load(url)) and not os.environ.get("IMGWATCH_NO_OPEN"):
+        subprocess.run(["open", url], capture_output=True)
+
+
 def annotate(entry):
-    """Open the mark-up page for a history entry (stills; pages via a headless screenshot)."""
+    """Open the mark-up page for a history entry: atom picking for structures, else marks on the
+    image (pages via a headless screenshot)."""
     if entry is None:
         warn("nothing shown yet to mark up"); return
     it = entry[0]
+    if len(it) == 1 and os.path.splitext(it[0])[1].lower() in STRUCT_EXTS and os.path.exists(it[0]) \
+            and (os.path.splitext(it[0])[1].lower() not in (".sdf", ".mol") or is_3d_single(it[0])):
+        return pick_atoms(it)
     src = stills.get(it)
     if src is None and len(it) == 1 and os.path.exists(it[0]):
         ext = os.path.splitext(it[0])[1].lower()
@@ -1773,9 +2353,89 @@ def annotate(entry):
         subprocess.run(["open", url], capture_output=True)   # no browser pane: default browser (tests: never)
 
 
+CMP_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Compare: __A__ vs __B__</title><style>
+:root{color-scheme:dark}body{margin:0;background:#111;color:#ddd;font:14px -apple-system,sans-serif}
+#top{position:sticky;top:0;background:#181818;border-bottom:1px solid #2a2a2a;padding:8px 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;z-index:3}
+button{background:#333;color:#fff;border:0;border-radius:5px;padding:5px 11px;font:inherit;cursor:pointer}button.on{background:#2d6cdf}
+.lab{color:#9ab}.lab b{color:#ffd400}.hint{color:#777}
+#stage{position:relative;margin:10px auto;max-width:calc(100vw - 20px);user-select:none;touch-action:none}
+#stage img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+#stage img#b{clip-path:inset(0 0 0 50%)}#bar{position:absolute;top:0;bottom:0;width:2px;background:#ffd400;left:50%;pointer-events:none}
+#tag{position:absolute;top:6px;left:8px;background:#000a;color:#ffd400;padding:2px 7px;border-radius:4px;font-weight:600;display:none}
+#side{display:none;gap:10px;padding:10px}#side figure{margin:0;flex:1;min-width:0}#side img{width:100%}#side figcaption{color:#9ab;margin-top:4px}
+</style></head><body>
+<div id="top"><span class="lab"><b>A</b> __A__ &nbsp;→&nbsp; <b>B</b> __B__</span>
+<button data-m="slide" class="on">Slider</button><button data-m="blink">Blink</button><button data-m="side">Side by side</button><button data-m="diff">Difference</button>
+<span class="hint">drag across the image · space flips A/B · 1–4 modes</span></div>
+<div id="stage"><img id="a" src="__IMGA__"><img id="b" src="__IMGB__"><div id="bar"></div><div id="tag"></div></div>
+<div id="side"><figure><img src="__IMGA__"><figcaption>A · __A__</figcaption></figure><figure><img src="__IMGB__"><figcaption>B · __B__</figcaption></figure></div>
+<script>
+var A=document.getElementById('a'),B=document.getElementById('b'),st=document.getElementById('stage'),bar=document.getElementById('bar'),tag=document.getElementById('tag');
+var mode='slide',pos=50,showB=true,timer=null,down=false;
+function size(){var w=Math.max(A.naturalWidth,B.naturalWidth)||800,h=Math.max(A.naturalHeight,B.naturalHeight)||600;
+  var maxw=Math.min(window.innerWidth-20,w),k=Math.min(1,(window.innerHeight-70)/(h*maxw/w));st.style.width=(maxw*k)+'px';st.style.height=(h*maxw/w*k)+'px';}
+function apply(){B.style.mixBlendMode='normal';B.style.clipPath='none';B.style.opacity=1;bar.style.display='none';tag.style.display='none';
+  st.style.display=mode=='side'?'none':'block';document.getElementById('side').style.display=mode=='side'?'flex':'none';
+  if(mode=='slide'){B.style.clipPath='inset(0 0 0 '+pos+'%)';bar.style.display='block';bar.style.left=pos+'%';}
+  if(mode=='blink'){B.style.opacity=showB?1:0;tag.style.display='block';tag.textContent=showB?'B':'A';}
+  if(mode=='diff'){B.style.mixBlendMode='difference';tag.style.display='block';tag.textContent='A − B (black = identical)';}
+  document.querySelectorAll('button').forEach(function(b){b.className=b.dataset.m==mode?'on':'';});}
+function setMode(m){mode=m;clearInterval(timer);timer=null;if(m=='blink'){showB=true;timer=setInterval(function(){showB=!showB;apply();},700);}apply();}
+document.querySelectorAll('button').forEach(function(b){b.onclick=function(){setMode(b.dataset.m);};});
+function at(e){var r=st.getBoundingClientRect();pos=Math.min(100,Math.max(0,(e.clientX-r.left)/r.width*100));apply();}
+st.addEventListener('pointerdown',function(e){if(mode=='slide'){down=true;st.setPointerCapture(e.pointerId);at(e);}});
+st.addEventListener('pointermove',function(e){if(mode=='slide'&&(down||e.pointerType=='mouse'))at(e);});
+st.addEventListener('pointerup',function(){down=false;});
+document.addEventListener('keydown',function(e){if(e.key==' '){e.preventDefault();if(mode!='blink')setMode('blink');clearInterval(timer);timer=null;showB=!showB;apply();}
+  var m={'1':'slide','2':'blink','3':'side','4':'diff'}[e.key];if(m)setMode(m);});
+A.onload=B.onload=function(){size();apply();};window.onresize=size;if(A.complete&&B.complete){size();apply();}
+</script></body></html>"""
+
+
+def compare(arg=""):
+    """b / --compare: before (pinned item, else the previous image) vs after (the current item),
+    or two given files, on a page with a slider, blink, side by side and a difference view."""
+    if arg:
+        pa, _, pb = arg.partition("\t")
+        ea, eb = item_for(pa), item_for(pb)
+    else:
+        eb = current()
+        if eb is None:
+            warn("nothing shown yet"); return
+        if pinned and pinned[0] != eb[0]:
+            ea = pinned
+        else:
+            idx = list(history).index(eb) if eb in history else len(history) - 1
+            ea = next((h for h in reversed(list(history)[:idx]) if item_image(h[0])), None)
+        if ea is None:
+            warn("no earlier image to compare with (pin one with p, or pass two files)"); return
+    sa, sb = item_image(ea[0]), item_image(eb[0])
+    if not sa or not sb:
+        warn("compare works on images (stills, PDFs, slides, snapshots), not pages"); return
+    port = ann_server()
+    _ann["n"] += 1
+    cid = str(_ann["n"])
+    nm = lambda it: os.path.basename(it[0]) if len(it) == 1 else f"{len(it)} images"
+    _ann["items"][cid] = {"id": cid, "src": sa, "src2": sb, "name": nm(ea[0]), "name2": nm(eb[0])}
+    url = f"http://127.0.0.1:{port}/{ANN_TOKEN}/c/{cid}"
+    print(f"\n\033[1;33m── ⇆ compare {nm(ea[0])} → {nm(eb[0])}\033[0;2m  slider · blink · side by side · difference · "
+          f"{link(url, 'open')}\033[0m", flush=True)
+    if not (html_mode() == "browser" and browser_load(url)) and not os.environ.get("IMGWATCH_NO_OPEN"):
+        subprocess.run(["open", url], capture_output=True)
+
+
 def ann_finished():
     while _ann["done"]:
         rec = _ann["done"].popleft()
+        if rec.get("kind") == "atoms":
+            n = len(rec["atoms"])
+            print(f"\n\033[1;33m── ✎ {n} atom{'s' if n != 1 else ''} picked\033[0;2m  "
+                  f"they go to Claude with your next message\033[0m", flush=True)
+            for m in rec["atoms"][:12]:
+                print(f"\033[2m    {m['label']}" + (f"  — {m['note']}" if m["note"] else "") + "\033[0m", flush=True)
+            if rec.get("marked"):
+                draw_image(rec["marked"])
+            continue
         n = len(rec["marks"])
         print(f"\n\033[1;33m── ✎ {n} mark{'s' if n != 1 else ''} saved\033[0;2m  "
               f"they go to Claude with your next message\033[0m", flush=True)
@@ -1787,17 +2447,31 @@ def handle(cmd, arg=""):
         if arg:
             set_pin(item_for(arg))
         else:
-            set_pin(None if pinned else latest())
+            set_pin(None if pinned else current())
     elif cmd == "unpin":
         set_pin(None)
     elif cmd == "annotate":
-        annotate(item_for(arg) if arg else latest())
+        annotate(item_for(arg) if arg else current())
     elif cmd == "redraw":
+        globals()["view"] = None
         redraw()
+    elif cmd in ("prev", "next"):
+        step(-1 if cmd == "prev" else 1)
+    elif cmd == "compare":
+        compare(arg)
+    elif cmd == "copy":
+        copy_item(current())
+    elif cmd == "open":
+        open_item(current())
     elif cmd == "help":
-        print("\033[2m  p  pin the latest item at the top (again: unpin)\n"
-              "  a  mark up the latest item: click/drag on it, add notes, Send; Claude gets it with your next message\n"
-              "  r  redraw\n  from Claude: imgwatch --pin PATH | --unpin | --annotate [PATH]\033[0m", flush=True)
+        print("\033[2m  ←/→  browse earlier items one at a time (→ past the newest: back to live)\n"
+              "  p  pin the item at the top, newest below (again: unpin)\n"
+              "  a  mark up the item: click/drag on it (structures: click atoms), add notes, Send;\n"
+              "     Claude gets it with your next message\n"
+              "  b  before/after: pinned (or previous) image vs this one, slider / blink / side by side\n"
+              "  c  copy the image to the clipboard (pages: the path)   o  open in its default app\n"
+              "  r  redraw\n"
+              "  from Claude: imgwatch --pin PATH | --unpin | --annotate [PATH] | --compare [A B]\033[0m", flush=True)
 
 
 def read_control():
@@ -1838,15 +2512,107 @@ def send_control(cmd, arg=""):
     if not subprocess.run(["pgrep", "-f", rf"imgwatch\.py --owner {owner}( |$)"], capture_output=True).stdout:
         print(f"imgwatch: no imgwatch pane for this Claude session (pid {owner})", file=sys.stderr); return 1
     if arg:
-        arg = os.path.abspath(os.path.expanduser(arg))
-        if not os.path.exists(arg):
-            print(f"imgwatch: no such file: {arg}", file=sys.stderr); return 1
+        parts = [os.path.abspath(os.path.expanduser(x)) for x in arg.split("\t")]
+        for x in parts:
+            if not os.path.exists(x):
+                print(f"imgwatch: no such file: {x}", file=sys.stderr); return 1
+        arg = "\t".join(parts)
     STATE.mkdir(parents=True, exist_ok=True)
     with open(STATE / f"control_{owner}", "a") as f:
         f.write(f"{cmd}\t{arg}\n")
     print({"pin": "pinned in the imgwatch pane", "unpin": "unpinned",
-           "annotate": "mark-up page opened; the user's marks arrive with their next message"}[cmd])
+           "annotate": "mark-up page opened; the user's marks arrive with their next message",
+           "compare": "compare page opened in the imgwatch browser pane"}[cmd])
     return 0
+
+
+# ---------------------------------------------------------------- self-reload
+# A `git pull` or an edit of this file restarts the pane in place (os.execv: same pid, same pane,
+# same command line, so the autostart hook's pgrep still matches), keeping what it was showing.
+SELF = Path(__file__).resolve()
+RELOAD = STATE / f"reload_{a.owner or os.getpid()}.json"
+
+
+def _self_mtime():
+    try:
+        return SELF.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+_self = {"seen": _self_mtime(), "changed": None, "bad": None}
+
+
+def maybe_reload():
+    """Called when idle. Restart once the file has been stable for 1 s and compiles; a version
+    that doesn't compile is reported once and the old one keeps running."""
+    if a.no_reload:
+        return
+    m = _self_mtime()
+    if m is None or m in (_self["seen"], _self["bad"]):
+        return
+    if not _self["changed"] or _self["changed"][0] != m:
+        _self["changed"] = (m, time.time()); return
+    if time.time() - _self["changed"][1] < 1.0:
+        return
+    try:
+        compile(SELF.read_text(), str(SELF), "exec")
+    except (SyntaxError, ValueError, OSError) as e:
+        _self["bad"] = m
+        warn(f"imgwatch.py changed but doesn't compile ({type(e).__name__}: {e}); still running the old version")
+        return
+    state = {"history": [[list(it), ts] for it, ts in history],
+             "pinned": [list(pinned[0]), pinned[1]] if pinned else None,
+             "updates": [[list(k), v] for k, v in updates.items()], "time": time.time()}
+    try:
+        RELOAD.write_text(json.dumps(state))
+    except OSError:
+        pass
+    print("\n\033[1;33m── ↻ imgwatch.py changed: restarting with the new version\033[0m", flush=True)
+    cleanup(close_browser=False)
+    os.execv(sys.executable, [sys.executable, str(SELF)] + sys.argv[1:])
+
+
+def restore_after_reload():
+    """Pick up what the previous version of this watcher was showing (written just before execv)."""
+    global pinned
+    try:
+        st = json.loads(RELOAD.read_text())
+        RELOAD.unlink()
+    except (OSError, ValueError):
+        return False
+    if time.time() - st.get("time", 0) > 120:
+        return False
+    for it, ts in st.get("history", []):
+        history.append((tuple(it), ts))
+    for k, v in st.get("updates", []):
+        updates[tuple(k)] = v
+    if st.get("pinned"):
+        pinned = (tuple(st["pinned"][0]), st["pinned"][1])
+    return True
+
+
+def cleanup(close_browser=True):
+    """Undo what the watcher set up: tty mode, FSEvents thread, headless Chrome, browser pane."""
+    global _driver
+    if _tty_saved is not None:
+        try:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _tty_saved)
+        except Exception:
+            pass
+    if fsw:
+        try:
+            fsw.stop()
+        except Exception:
+            pass
+    if close_browser and (_browser_id or BROWSER_STATE.exists()) and html_mode() == "browser":
+        close_browser_pane()
+    if _driver is not None:
+        try:
+            _driver.quit()
+        except Exception:
+            pass
+        _driver = None
 
 
 # ---------------------------------------------------------------- main
@@ -1860,6 +2626,10 @@ if a.unpin:
     sys.exit(send_control("unpin"))
 if a.annotate is not None:
     sys.exit(send_control("annotate", a.annotate))
+if a.compare is not None:
+    if len(a.compare) not in (0, 2):
+        print("imgwatch: --compare takes two files, or none", file=sys.stderr); sys.exit(2)
+    sys.exit(send_control("compare", "\t".join(a.compare)))
 
 STATE.mkdir(parents=True, exist_ok=True)
 prune()
@@ -1895,13 +2665,33 @@ try:
         KEYS = True
 except (ImportError, OSError, ValueError):
     pass
-KEYMAP = {"p": "pin", "a": "annotate", "r": "redraw", "?": "help", "h": "help"}
+KEYMAP = {"p": "pin", "a": "annotate", "b": "compare", "c": "copy", "o": "open", "r": "redraw",
+          "?": "help", "h": "help", ",": "prev", ".": "next", "\x1b[D": "prev", "\x1b[C": "next",
+          "\x1bOD": "prev", "\x1bOC": "next"}
+
+
+def keys_in(buf):
+    """Split what one read returned into known keys (arrows arrive as escape sequences)."""
+    out, i = [], 0
+    while i < len(buf):
+        seq = next((k for k in ("\x1b[D", "\x1b[C", "\x1bOD", "\x1bOC") if buf.startswith(k, i)), None)
+        if seq:
+            out.append(seq); i += len(seq); continue
+        if buf[i] == "\x1b":   # some other escape sequence: skip it whole
+            m = re.match(r"\x1b(\[[0-9;]*[A-Za-z~]|O.)?", buf[i:])
+            i += len(m.group(0)); continue
+        out.append(buf[i].lower()); i += 1
+    return [k for k in out if k in KEYMAP]
 
 signal.signal(signal.SIGWINCH, on_winch)
 signal.signal(signal.SIGTERM, on_term)
 signal.signal(signal.SIGHUP, on_term)
 polling = "(off)" if a.no_poll else ", ".join(map(str, dirs)) + (f" + scratch of session {a.session[:8]}" if a.session and not a.dirs else "")
-banner()
+if restore_after_reload():
+    redraw()
+    print(f"\033[2m  ↻ reloaded: now {version()}\033[0m", flush=True)
+else:
+    banner()
 batch, first_new, last_new = [], 0.0, 0.0
 try:
     while True:
@@ -1940,6 +2730,8 @@ try:
         if batch and (not a.burst or now - last_new > 0.5 or now - first_new > 3):
             show(batch); batch = []
         read_control()
+        if not batch and not new:
+            maybe_reload()
         if a.owner:
             try:
                 os.kill(a.owner, 0)
@@ -1954,28 +2746,11 @@ try:
             if KEYS:
                 r, _, _ = select.select([sys.stdin], [], [], 0.1)
                 if r:
-                    ch = os.read(sys.stdin.fileno(), 32).decode(errors="ignore")
-                    if len(ch) == 1 and ch.lower() in KEYMAP:
-                        handle(KEYMAP[ch.lower()])
+                    for k in keys_in(os.read(sys.stdin.fileno(), 64).decode(errors="ignore")):
+                        handle(KEYMAP[k])
             else:
                 time.sleep(0.1)
 except (KeyboardInterrupt, SystemExit):
     pass
 finally:
-    if _tty_saved is not None:
-        try:
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _tty_saved)
-        except Exception:
-            pass
-    if fsw:
-        try:
-            fsw.stop()
-        except Exception:
-            pass
-    if (_browser_id or BROWSER_STATE.exists()) and html_mode() == "browser":
-        close_browser_pane()
-    if _driver is not None:
-        try:
-            _driver.quit()
-        except Exception:
-            pass
+    cleanup()
