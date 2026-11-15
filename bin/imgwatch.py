@@ -782,19 +782,21 @@ def molstar_assets():
 # chain / residue / atom / altloc / xyz / B read through Mol*'s StructureProperties (not parsed from
 # a display label); Send posts them, plus a snapshot of the view, to the annotate server.
 PICK_CSS = """
-#pick{position:absolute;top:8px;right:8px;width:320px;max-height:calc(100% - 16px);overflow:auto;z-index:10;
+#pick{position:absolute;top:8px;right:52px;width:320px;max-height:calc(100% - 16px);overflow:auto;z-index:10;
   background:#181818ee;border:1px solid #333;border-radius:8px;padding:10px;color:#ddd;font:13px -apple-system,sans-serif}
 #pick b{color:#fff}#pick .hint{color:#888;margin:4px 0 8px}#pick ol{padding-left:20px;margin:6px 0}#pick li{margin:6px 0}
 #pick .at{font:12px ui-monospace,Menlo,monospace;color:#ffd400}#pick .x{color:#888;cursor:pointer;float:right}
 #pick input,#pick textarea{width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #333;border-radius:4px;padding:4px 6px;font:inherit;margin-top:3px}
 #pick textarea{height:46px}#pick button{background:#2d6cdf;color:#fff;border:0;border-radius:5px;padding:5px 12px;font:inherit;cursor:pointer;margin:6px 6px 0 0}
 #pick button.alt{background:#333}#pick #pmsg{color:#7ee787;margin-top:6px}
+#pick .bar{display:flex;justify-content:space-between;align-items:center}
+#pick.min{width:auto;padding:5px 10px;cursor:pointer}#pick.min .body{display:none}#pick.min:hover{border-color:#2d6cdf}
 """
-PICK_HTML = """<div id="pick"><b>Pick atoms</b> <span class="x" id="pmin">hide</span>
-<div class="hint">click atoms in the view (drag still rotates) · add a note per atom · Send · Claude gets them with your next message</div>
+PICK_HTML = """<div id="pick" class="min"><div class="bar"><b id="ptitle">✎ Pick atoms</b><span class="x" id="pmin"></span></div>
+<div class="body"><div class="hint">click atoms in the view (drag still rotates) · add a note per atom · Send · Claude gets them with your next message</div>
 <ol id="plist"></ol><textarea id="pnote" placeholder="Overall note (optional)"></textarea>
 <button id="psend">Send to Claude</button><button class="alt" id="pundo">Undo</button><button class="alt" id="pclear">Clear</button>
-<div id="pmsg"></div></div>"""
+<div id="pmsg"></div></div></div>"""
 PICK_JS = """
 function setupPick(v){
   var S=molstar.lib.structure, SE=S.StructureElement, SP=S.StructureProperties, picks=[];
@@ -804,6 +806,7 @@ function setupPick(v){
     x.className='x';x.textContent='✕';x.onclick=function(){picks.splice(i,1);list();};li.appendChild(x);
     inp.placeholder='what about it?';inp.value=a.note||'';inp.oninput=function(){a.note=inp.value;};li.appendChild(inp);ol.appendChild(li);});}
   v.plugin.behaviors.interaction.click.subscribe(function(e){
+    if(document.getElementById('pick').classList.contains('min')) return;   // panel closed: a click is just a click
     var l=e.current&&e.current.loci; if(!l||l.kind!=='element-loci') return;
     var loc=SE.Loci.getFirstLocation(l); if(!loc) return;
     var a={chain:SP.chain.auth_asym_id(loc), resn:SP.atom.auth_comp_id(loc), resi:SP.residue.auth_seq_id(loc),
@@ -815,8 +818,12 @@ function setupPick(v){
     picks.push(a);list();var ins=document.querySelectorAll('#plist input');if(ins.length)ins[ins.length-1].focus();});
   document.getElementById('pundo').onclick=function(){picks.pop();list();};
   document.getElementById('pclear').onclick=function(){picks=[];list();};
-  document.getElementById('pmin').onclick=function(){var p=document.getElementById('pick');var h=p.dataset.h!=='1';p.dataset.h=h?'1':'0';
-    Array.prototype.forEach.call(p.children,function(c){if(c.id!=='pmin'&&c.tagName!=='B')c.style.display=h?'none':'';});this.textContent=h?'show':'hide';};
+  // collapsed to a button until opened (?open=1 = opened from the a key / --annotate); picking only while open
+  var box=document.getElementById('pick'), pmin=document.getElementById('pmin');
+  function setOpen(o){box.classList.toggle('min',!o);pmin.textContent=o?'hide':'';}
+  box.addEventListener('click',function(){if(box.classList.contains('min'))setOpen(true);});
+  pmin.onclick=function(e){e.stopPropagation();setOpen(false);};
+  setOpen(/[?&]open=1/.test(location.search));
   document.getElementById('psend').onclick=function(){
     var note=document.getElementById('pnote').value, msg=document.getElementById('pmsg');
     if(!picks.length&&!note.trim()){msg.textContent='Nothing picked yet.';return;}
@@ -845,7 +852,7 @@ def molstar_page(p, pick=False):
         data = f'Uint8Array.from(atob("{base64.b64encode(raw).decode()}"), c => c.charCodeAt(0))'
     else:
         data = json.dumps(raw.decode(errors="replace"))
-    return f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(('Pick atoms: ' if pick else '') + os.path.basename(p))}</title>
+    return f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(os.path.basename(p))}</title>
 <style>{css}</style><style>html,body{{margin:0;height:100%;background:#111}}#app{{position:absolute;inset:0}}{PICK_CSS if pick else ''}</style>
 </head><body><div id="app"></div>{PICK_HTML if pick else ''}<script>{js}</script><script>{PICK_JS if pick else ''}
 molstar.Viewer.create('app', {{layoutIsExpanded: false, layoutShowControls: false, layoutShowSequence: true,
@@ -1881,6 +1888,11 @@ def render(item, ts, load=True, head=True, mark=""):
         pages[item] = page or p
         if not load and html_mode() == "browser":
             print("\033[2m  (in the browser pane)\033[0m", flush=True); return
+        if ext in STRUCT_EXTS and page and html_mode() == "browser":
+            # served with the pick panel built in (collapsed): atoms can be sent any time, no key needed
+            print("\033[2m  → browser pane · ✎ Pick atoms (top right) sends me atoms\033[0m", flush=True)
+            if browser_load(struct_url(p)):
+                return
         src = show_html(page, orig=p) if page else show_html(p)
         if src is None:
             return
@@ -2074,7 +2086,7 @@ def item_for(path):
 
 
 ANN_TOKEN = secrets.token_urlsafe(12)  # in every annotate URL: other local pages can't post marks
-_ann = {"srv": None, "port": None, "items": {}, "n": 0, "done": deque()}
+_ann = {"srv": None, "port": None, "items": {}, "n": 0, "done": deque(), "paths": {}}
 
 ANN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Mark up: __NAME__</title><style>
 :root{color-scheme:dark}body{margin:0;background:#111;color:#ddd;font:14px -apple-system,sans-serif}
@@ -2313,15 +2325,24 @@ def save_atoms(it, data):
     return rec
 
 
+def struct_url(p, opened=False):
+    """The structure's Mol* page served by the annotate server, pick panel built in (one id per file;
+    the page is built from the file on every load, so it is always current)."""
+    port = ann_server()
+    rp = os.path.realpath(p)
+    aid = _ann["paths"].get(rp)
+    if aid is None:
+        _ann["n"] += 1
+        aid = _ann["paths"][rp] = str(_ann["n"])
+        _ann["items"][aid] = {"id": aid, "struct": True, "orig": p, "name": os.path.basename(p)}
+    return f"http://127.0.0.1:{port}/{ANN_TOKEN}/s/{aid}" + ("?open=1" if opened else "")
+
+
 def pick_atoms(it):
-    """Mark up a structure: its Mol* view with the atom-picking panel, served by the annotate server."""
+    """Mark up a structure: its Mol* view with the atom-picking panel open."""
     if molstar_assets() is None:
         warn("Mol* not available (offline?)"); return
-    port = ann_server()
-    _ann["n"] += 1
-    aid = str(_ann["n"])
-    _ann["items"][aid] = {"id": aid, "struct": True, "orig": it[0], "name": os.path.basename(it[0])}
-    url = f"http://127.0.0.1:{port}/{ANN_TOKEN}/s/{aid}"
+    url = struct_url(it[0], opened=True)
     print(f"\n\033[1;33m── ✎ pick atoms in {os.path.basename(it[0])}\033[0;2m  click atoms, add notes, Send · "
           f"{link(url, 'open')}\033[0m", flush=True)
     open_tool_page(url)

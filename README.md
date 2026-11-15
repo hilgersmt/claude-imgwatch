@@ -34,7 +34,8 @@ newest item shows under it, both shrunk to fit, for "make it look like this". `p
 (or PATH) in a page where you click for a point or drag for a box, type a note per mark, and press
 **Send**. The marks go to Claude **with your next message**: a marked-up copy plus pixel coordinates
 and your notes, so "this label" needs no describing. Pages (HTML, notebooks) are marked up from a
-screenshot. **Structures** open in Mol* with a pick panel instead: click atoms, note each, Send, and Claude
+screenshot. **Structures** have a pick panel built into their Mol* view (the "✎ Pick atoms" button, top
+right; `a` opens it too): click atoms, note each, Send, and Claude
 gets each atom exactly (`A/CYS 481/SG`, the Coot/Moorhen CID `//A/481/SG`, a PyMOL selection, xyz) plus a
 snapshot of the view. Marks older than 30 minutes (`IMGWATCH_MARK_MAX_MIN`) are assumed to belong to an
 earlier message: Claude gets one line with their age instead of the full marks.

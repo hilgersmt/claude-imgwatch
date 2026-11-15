@@ -5,7 +5,8 @@ commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits 
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
 ## Unreleased
-- **Atom picking**: marking up a structure (key `a`, `--annotate`) opens Mol* with a pick panel; Claude
+- **Atom picking**: every structure in the browser pane has a "✎ Pick atoms" button (served from the local
+  server; `a` / `--annotate` opens it expanded). Clicks only pick while it is open; Claude
   gets each clicked atom exactly (chain/residue/atom/altloc from the model, Coot/Moorhen CID, PyMOL
   selection, xyz) with your notes and a snapshot of the view.
 - **Before/after** (key `b`, `imgwatch --compare [A B]`): pinned (or previous) image vs the current one as

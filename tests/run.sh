@@ -374,6 +374,7 @@ if waitfor 'pick atoms in tiny.pdb' 8; then
   surl=$(log | grep -ao 'http://127.0.0.1:[0-9]*/[A-Za-z0-9_-]*/s/[0-9]*' | tail -1)
   if curl -sf "$surl" > "$T/pick.html"; then
     check "structure mark-up: Mol* page with the atom-picking panel" "grep -q 'setupPick' '$T/pick.html' && grep -q 'THR A   1' '$T/pick.html'"
+    check "pick panel starts collapsed; ?open=1 (the a key) opens it; picking only while open" "grep -q 'id=\"pick\" class=\"min\"' '$T/pick.html' && grep -q 'open=1' '$T/pick.html' && grep -q \"classList.contains('min')) return\" '$T/pick.html' && log | grep -q '/s/[0-9]*?open=1'"
     curl -sf -X POST -H 'Content-Type: application/json' --data '{"kind":"atoms","atoms":[{"chain":"A","resn":"THR","resi":1,"ins":"","atom":"CA","alt":"","element":"C","x":16.967,"y":12.784,"z":4.338,"b":10.8,"model":1,"note":"why here?"}],"note":"","shot":""}' "$surl" > "$T/postatoms.json"
     printf '{"session_id":"S1","prompt":"look"}' | "$repo/hooks/imgwatch-annotations.sh" > "$T/ctx3.txt"
     check "picked atoms reach Claude: label, CID, PyMOL selection, xyz, note" "grep -q '\"ok\": *true' '$T/postatoms.json' && waitfor '1 atom picked' 6 && grep -qF 'A/THR 1/CA  [CID //A/1/CA | PyMOL chain A and resi 1 and name CA | xyz (16.967, 12.784, 4.338)]: why here?' '$T/ctx3.txt'"
