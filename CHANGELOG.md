@@ -9,6 +9,8 @@ Update with `git pull` in the repo; new Claude sessions pick it up.
   where you click points / drag boxes and add notes; Send burns them into a copy and a new
   **UserPromptSubmit hook** (`imgwatch-annotations.sh`) hands Claude the marked-up copy, pixel
   coordinates and notes with your next message (once). Pages are marked up from a screenshot.
+  Send clears the page, so a later Send carries only new marks; mark numbers are placed outside
+  the box/point (above, else below/left) so they never cover what is marked.
 - **Inline images from tool results**: Chrome screenshots and MCP tools that return an image instead of
   a file are saved to `~/.claude/imgwatch/inline/` and shown.
 - **Replace in place**: an item shown again right after itself replaces its entry (`↻N`) instead of

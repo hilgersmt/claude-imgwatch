@@ -1587,8 +1587,14 @@ function draw(tmp){ov.setAttribute('viewBox','0 0 '+im.naturalWidth+' '+im.natur
     var c=m===tmp?'#fff':'#ffd400';
     if(m.kind=='box') ov.appendChild(el('rect',{x:m.x,y:m.y,width:m.w,height:m.h,fill:'none',stroke:c,'stroke-width':lw}));
     else ov.appendChild(el('circle',{cx:m.x,cy:m.y,r:fs*0.6,fill:'none',stroke:c,'stroke-width':lw}));
-    if(m!==tmp){var t=el('text',{x:m.x+(m.kind=='box'?lw*2:fs*0.7),y:m.y+(m.kind=='box'?fs:-fs*0.3),fill:'#ffd400','font-size':fs,'font-weight':'bold',stroke:'#000','stroke-width':lw*0.6,'paint-order':'stroke'});t.textContent=i+1;ov.appendChild(t);}
+    if(m!==tmp){var s=String(i+1),q=lpos(m,s.length*fs*0.62,fs,lw,fs*0.6);
+      var t=el('text',{x:q[0],y:q[1]+fs*0.85,fill:'#ffd400','font-size':fs,'font-weight':'bold',stroke:'#000','stroke-width':lw*0.6,'paint-order':'stroke'});t.textContent=s;ov.appendChild(t);}
   });}
+// label outside the mark so it never covers what is marked (same rule as save_annotation's label_pos)
+function lpos(m,tw,th,lw,r){var W=im.naturalWidth,H=im.naturalHeight,x,y;
+  if(m.kind=='box'){x=m.x;y=m.y-lw-th-1;if(y<0){y=m.y+m.h+lw+1;if(y+th>H){x=m.x+lw*2;y=m.y+lw;}}}
+  else{y=m.y-th/2;x=m.x-r-3-tw;if(x<0)x=m.x+r+3;}
+  return [Math.min(Math.max(x,0),W-tw),Math.min(Math.max(y,0),H-th)];}
 function list(){var ol=document.getElementById('list');ol.innerHTML='';marks.forEach(function(m,i){
   var li=document.createElement('li'),inp=document.createElement('input');
   inp.placeholder=(m.kind=='box'?'box':'point')+' — what about it?';inp.value=m.note||'';inp.oninput=function(){m.note=inp.value;};
@@ -1607,8 +1613,10 @@ document.getElementById('send').onclick=function(){
   var note=document.getElementById('note').value;
   if(!marks.length&&!note.trim()){document.getElementById('msg').textContent='Nothing marked yet.';return;}
   fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({marks:marks,note:note})})
-   .then(function(r){return r.json();}).then(function(j){document.getElementById('msg').textContent=j.ok?
-     'Saved. It goes to Claude with your next message (type it in the Claude pane).':'Failed: '+j.error;})
+   .then(function(r){return r.json();}).then(function(j){
+     if(j.ok){marks=[];document.getElementById('note').value='';draw();list();}  // sent once; a later Send carries only new marks
+     document.getElementById('msg').textContent=j.ok?
+     'Saved and cleared. It goes to Claude with your next message (type it in the Claude pane).':'Failed: '+j.error;})
    .catch(function(e){document.getElementById('msg').textContent='Failed: '+e;});};
 im.onload=function(){draw();};if(im.complete)draw();
 </script></body></html>"""
@@ -1677,6 +1685,23 @@ def ann_server():
     return _ann["port"]
 
 
+def label_pos(m, tw, th, W, H, lw, r):
+    """Top-left of a mark's number, outside the mark so it never covers what is marked:
+    boxes above their top-left corner (below if no room, inside as a last resort),
+    points left of the circle (right if no room). Kept in the image. Mirrors lpos() in ANN_PAGE."""
+    if m["kind"] == "box":
+        x, y = m["x"], m["y"] - lw - th - 1
+        if y < 0:
+            y = m["y"] + m.get("h", 0) + lw + 1
+            if y + th > H:
+                x, y = m["x"] + lw * 2, m["y"] + lw
+    else:
+        x, y = m["x"] - r - 3 - tw, m["y"] - th // 2
+        if x < 0:
+            x = m["x"] + r + 3
+    return (min(max(x, 0), W - tw), min(max(y, 0), H - th))
+
+
 def save_annotation(it, data):
     """Burn the marks into a copy of the image and queue a record for the UserPromptSubmit hook."""
     from PIL import Image, ImageDraw, ImageFont
@@ -1694,15 +1719,16 @@ def save_annotation(it, data):
         font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", fs)
     except OSError:
         font = ImageFont.load_default()
-    for i, m in enumerate(marks, 1):
+    sw, r = max(1, lw // 2), int(fs * 0.6)
+    for m in marks:  # shapes first, so no outline is drawn over another mark's number
         if m["kind"] == "box":
             d.rectangle([m["x"], m["y"], m["x"] + m.get("w", 0), m["y"] + m.get("h", 0)], outline=(255, 212, 0), width=lw)
-            at = (m["x"] + lw * 2, m["y"] + lw)
         else:
-            r = int(fs * 0.6)
             d.ellipse([m["x"] - r, m["y"] - r, m["x"] + r, m["y"] + r], outline=(255, 212, 0), width=lw)
-            at = (m["x"] + r + 2, m["y"] - r - fs)
-        d.text(at, str(i), fill=(255, 212, 0), font=font, stroke_width=max(1, lw // 2), stroke_fill=(0, 0, 0))
+    for i, m in enumerate(marks, 1):
+        b = d.textbbox((0, 0), str(i), font=font, anchor="lt", stroke_width=sw)
+        at = label_pos(m, b[2] - b[0], b[3] - b[1], im.width, im.height, lw, r)
+        d.text(at, str(i), fill=(255, 212, 0), font=font, anchor="lt", stroke_width=sw, stroke_fill=(0, 0, 0))
     ANNOT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     comp = ANNOT / f"{SID[:8]}_{stamp}_marked.png"
