@@ -1743,6 +1743,7 @@ def show_html(p, orig=None):
 seen = {}  # path -> mtime already shown (or present at start)
 history = deque(maxlen=max(a.keep, 50))  # (item, time shown) of recent items: redrawn on resize/replace, ←/→ browse them
 view = None       # index into history while browsing it with ←/→ (None = live: newest items as they come)
+tool_page = False  # a mark-up / pick / compare page is in the browser pane: redraws must not load over it
 resized_at = None  # set by SIGWINCH; inline images are sized when drawn, so redraw after a resize
 pinned = None      # (item, ts) kept at the top of the pane until unpinned
 stills = {}        # item -> the image file actually drawn for it (what the annotate page shows)
@@ -1793,6 +1794,7 @@ def show(paths):
     else:
         items = [(p,) for p in paths]
     for it in items:
+        globals()["tool_page"] = False   # something new: it may take the browser pane back
         ts = f"{datetime.now():%H:%M:%S}"
         if not a.no_replace and history and history[-1][0] == it:
             updates[it] = updates.get(it, 1) + 1
@@ -1941,6 +1943,16 @@ def banner():
         print("\033[2m  keys: ←/→ browse · p pin · a mark up · b before/after · c copy · o open · r redraw · ? help\033[0m", flush=True)
 
 
+def open_tool_page(url):
+    """Mark-up, pick and compare pages: into the browser pane (kept there until a new item arrives),
+    else the default browser."""
+    global tool_page
+    if html_mode() == "browser" and browser_load(url):
+        tool_page = True
+    elif not os.environ.get("IMGWATCH_NO_OPEN"):
+        subprocess.run(["open", url], capture_output=True)
+
+
 def redraw():
     global MAX_ROWS
     if view is not None and view < len(history):   # browsing with ←/→: keep showing that item
@@ -1957,7 +1969,7 @@ def redraw():
     else:
         MAX_ROWS = None
         items = items[-a.keep:] if a.keep > 0 else []
-    last_page = max((i for i, x in enumerate(items) if is_page(x[0])), default=None)
+    last_page = None if tool_page else max((i for i, x in enumerate(items) if is_page(x[0])), default=None)
     for i, x in enumerate(items):
         render(*x, load=(i == last_page))
 
@@ -2312,8 +2324,7 @@ def pick_atoms(it):
     url = f"http://127.0.0.1:{port}/{ANN_TOKEN}/s/{aid}"
     print(f"\n\033[1;33m── ✎ pick atoms in {os.path.basename(it[0])}\033[0;2m  click atoms, add notes, Send · "
           f"{link(url, 'open')}\033[0m", flush=True)
-    if not (html_mode() == "browser" and browser_load(url)) and not os.environ.get("IMGWATCH_NO_OPEN"):
-        subprocess.run(["open", url], capture_output=True)
+    open_tool_page(url)
 
 
 def annotate(entry):
@@ -2349,8 +2360,7 @@ def annotate(entry):
                           "orig": it[0] if len(it) == 1 else ", ".join(it)}
     url = f"http://127.0.0.1:{port}/{ANN_TOKEN}/a/{aid}"
     print(f"\n\033[1;33m── ✎ mark up {name}\033[0;2m  click = point, drag = box, then Send · {link(url, 'open')}\033[0m", flush=True)
-    if not (html_mode() == "browser" and browser_load(url)) and not os.environ.get("IMGWATCH_NO_OPEN"):
-        subprocess.run(["open", url], capture_output=True)   # no browser pane: default browser (tests: never)
+    open_tool_page(url)   # no browser pane: default browser (tests: never)
 
 
 CMP_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Compare: __A__ vs __B__</title><style>
@@ -2420,8 +2430,7 @@ def compare(arg=""):
     url = f"http://127.0.0.1:{port}/{ANN_TOKEN}/c/{cid}"
     print(f"\n\033[1;33m── ⇆ compare {nm(ea[0])} → {nm(eb[0])}\033[0;2m  slider · blink · side by side · difference · "
           f"{link(url, 'open')}\033[0m", flush=True)
-    if not (html_mode() == "browser" and browser_load(url)) and not os.environ.get("IMGWATCH_NO_OPEN"):
-        subprocess.run(["open", url], capture_output=True)
+    open_tool_page(url)
 
 
 def ann_finished():
@@ -2729,7 +2738,8 @@ try:
         # files may still be arriving (a burst): draw once 0.5 s pass without new ones, or after 3 s
         if batch and (not a.burst or now - last_new > 0.5 or now - first_new > 3):
             show(batch); batch = []
-        read_control()
+        if not batch:
+            read_control()
         if not batch and not new:
             maybe_reload()
         if a.owner:

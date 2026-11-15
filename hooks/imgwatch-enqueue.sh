@@ -57,7 +57,9 @@ if fp and fp.lower().endswith(EXTS):
     elif (tool in ("Write", "Edit", "MultiEdit") or (tool == "Read" and env("IMGWATCH_DOCS_ON_READ") == "1")) \
             and not os.path.realpath(fp).startswith(claude_dir):
         out.append(fp)
-if tool == "Bash" or tool.startswith("mcp__"):
+cmd = ti.get("command", "") if isinstance(ti, dict) else ""
+own = tool == "Bash" and isinstance(cmd, str) and re.match(r"\s*(\S*/)?imgwatch(\.py)?\s", cmd)
+if (tool == "Bash" and not own) or tool.startswith("mcp__"):   # `imgwatch --annotate X`: X is already shown
     texts = []
     def walk(x):
         if isinstance(x, str): texts.append(x)

@@ -184,6 +184,9 @@ rm -f "$q"
 "$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":sys.argv[1]+"/stale.png "+sys.argv[2]}}))' "$T" "$HOME/.claude/imgwatch/cache/own.png" | hook
 "$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Grep","tool_input":{},"tool_response":{"filenames":[sys.argv[1]+"/pymol.png"]}}))' "$T" | hook
 check "hook: ignores stale files, its own cache, Grep output" "[ ! -s '$q' ]"
+echo x > "$T/fresh.pdb"
+"$py" -c 'import json,sys; print(json.dumps({"session_id":"S","cwd":sys.argv[1],"tool_name":"Bash","tool_input":{"command":"imgwatch --annotate "+sys.argv[1]+"/fresh.pdb"},"tool_response":{"stdout":"mark-up page opened"}}))' "$T" | hook
+check "hook: an imgwatch command's own file argument is not re-queued" "[ ! -s '$q' ]"
 rm -f "$q"
 "$py" -c 'import json,base64; d=base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode(); print(json.dumps({"session_id":"S","tool_name":"mcp__claude-in-chrome__computer","tool_input":{"action":"screenshot"},"tool_response":[{"type":"text","text":"ok"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":d}},{"type":"image","mimeType":"image/png","data":d}]}))' | hook
 check "hook: inline images in a tool result saved and queued (both block shapes)" "[ \$(grep -c '/.claude/imgwatch/inline/chrome-computer_' '$q') -eq 2 ] && ls '$HOME/.claude/imgwatch/inline/'*.jpg '$HOME/.claude/imgwatch/inline/'*.png >/dev/null"
