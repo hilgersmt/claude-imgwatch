@@ -4,7 +4,7 @@ Versions are git tags (`vMAJOR.MINOR.PATCH`); `imgwatch -V` and the pane banner 
 commit, e.g. `v0.0.5 (1a2b3c4)`, or `v0.0.5+3 (abc1234)` for work three commits past a release.
 Update with `git pull` in the repo; new Claude sessions pick it up.
 
-## Unreleased
+## v0.0.9 — 2026-11-15
 - **Atom picking**: every structure in the browser pane has a "✎ Pick atoms" button (served from the local
   server; `a` / `--annotate` opens it expanded). Clicks only pick while it is open; Claude
   gets each clicked atom exactly (chain/residue/atom/altloc from the model, Coot/Moorhen CID, PyMOL
@@ -40,7 +40,7 @@ Update with `git pull` in the repo; new Claude sessions pick it up.
   links/embeds/callouts, mermaid), **Jupyter notebooks** (saved outputs, static), **sequences and
   alignments** (FASTA/A3M/Clustal/Stockholm; colours, conservation, identity, 60-residue blocks).
 - Redraws (resize, replace, pin) reload only the newest page into the browser pane, not every page.
-- Tests: 22 new checks (63 total).
+- Tests: 85 checks in `tests/run.sh`.
 - **Served pages**: `IMGWATCH_URLMAP="PATH=URL;…"` (config) maps an HTML file or folder to the local server
   that serves it, so dashboards that `fetch("/api/…")` show live instead of as an empty `file://` page
   (browser, shot and link lanes). Unmapped pages that fetch from their server get a hint. Three new tests.
